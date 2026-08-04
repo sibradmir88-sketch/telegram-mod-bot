@@ -1,0 +1,22 @@
+# Render Blueprint: деплой одним нажатием через render.com
+# Тип worker = фоновая задача, которая НЕ засыпает, пока процесс работает
+# (поллинг Telegram — это постоянная активность).
+services:
+  - type: worker
+    name: telegram-mod-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false          # впиши токен вручную в панели Render
+      - key: ADMIN_IDS
+        value: "8587090554"
+      - key: ADMIN_USERNAMES
+        value: "desacratio"
+      # Рекомендуется: бесплатная Postgres (Neon/Supabase) для сохранения
+      # правил между перезапусками. Без неё бот использует SQLite-файл,
+      # а диск на бесплатном тарифе Render эфемерный.
+      - key: DATABASE_URL
+        sync: false
