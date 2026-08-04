@@ -14,6 +14,7 @@ from .ui import (
     HELP_TEXT,
     WELCOME_TEXT,
     chat_list_keyboard,
+    esc,
     main_menu,
     rules_keyboard,
     settings_keyboard,
@@ -74,7 +75,7 @@ async def edit_menu(callback: CallbackQuery):
 async def show_rules_view(callback: CallbackQuery, chat_id: int, storage: Storage):
     chat = await storage.get_chat(chat_id)
     rules = await storage.get_rules(chat_id)
-    title = (chat and chat.get("title")) or f"чат {chat_id}"
+    title = esc((chat and chat.get("title")) or f"чат {chat_id}")
     enabled = bool(chat and chat.get("enabled"))
     status = "✅ активен" if enabled else "⏸ на паузе"
 

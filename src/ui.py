@@ -1,7 +1,14 @@
 """Красивые клавиатуры и тексты интерфейса."""
 
+from html import escape as _esc
+
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+
+def esc(value) -> str:
+    """Экранирование HTML в пользовательских строках."""
+    return _esc(str(value), quote=False)
 
 WELCOME_TEXT = (
     "👋 Привет, босс!\n\n"
@@ -82,7 +89,7 @@ def rules_keyboard(rules: list[dict], chat_id: int, enabled: bool) -> InlineKeyb
 
 
 def settings_text(s: dict, chat: dict | None) -> str:
-    title = (chat and chat.get("title")) or s["chat_id"]
+    title = esc((chat and chat.get("title")) or s["chat_id"])
     on = lambda v: "✅" if v else "❌"  # noqa: E731
     return (
         f"⚙️ Настройки чата «{title}»\n\n"

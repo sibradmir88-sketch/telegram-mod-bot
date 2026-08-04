@@ -11,6 +11,7 @@ from .config import ADMIN_IDS
 from .moderation import Trackers, apply_punishment, is_protected
 from .rules import Rule, format_duration, parse_duration, parse_rule, rule_matches_text_dict
 from .storage import Storage
+from .ui import esc
 
 router = Router()
 
@@ -37,11 +38,11 @@ async def on_my_chat_member(event: ChatMemberUpdated, bot, storage: Storage):
     if status in (ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.RESTRICTED):
         await notify_admins(
             bot,
-            f"🤖 Меня добавили в чат «{chat.title or chat.id}».\n"
+            f"🤖 Меня добавили в чат «{esc(chat.title or chat.id)}».\n"
             "Назначь меня администратором и добавь чат: /start → ➕ Добавить чат",
         )
     elif status in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED):
-        await notify_admins(bot, f"👋 Меня удалили из чата «{chat.title or chat.id}»")
+        await notify_admins(bot, f"👋 Меня удалили из чата «{esc(chat.title or chat.id)}»")
 
 
 # ---------------------------------------------------------------- admin commands in group
@@ -72,7 +73,7 @@ async def group_mute(message: Message, bot, storage: Storage):
         permissions=ChatPermissions(can_send_messages=False),
         until_date=int(time.time()) + duration,
     )
-    await message.answer(f"🔇 {message.reply_to_message.from_user.full_name} — мут {format_duration(duration)}")
+    await message.answer(f"🔇 {esc(message.reply_to_message.from_user.full_name)} — мут {format_duration(duration)}")
 
 
 @router.message(Command("ban"), F.chat.type.in_(GROUP_TYPES))
@@ -86,7 +87,7 @@ async def group_ban(message: Message, bot):
     duration = parse_duration(message.text)
     until = int(time.time()) + duration if duration else None
     await bot.ban_chat_member(message.chat.id, target, until_date=until)
-    await message.answer(f"⛔️ {message.reply_to_message.from_user.full_name} — бан {format_duration(duration)}")
+    await message.answer(f"⛔️ {esc(message.reply_to_message.from_user.full_name)} — бан {format_duration(duration)}")
 
 
 @router.message(Command("kick"), F.chat.type.in_(GROUP_TYPES))
@@ -99,7 +100,7 @@ async def group_kick(message: Message, bot):
         return
     await bot.ban_chat_member(message.chat.id, target, revoke_messages=False)
     await bot.unban_chat_member(message.chat.id, target)
-    await message.answer(f"👢 {message.reply_to_message.from_user.full_name} — кик")
+    await message.answer(f"👢 {esc(message.reply_to_message.from_user.full_name)} — кик")
 
 
 @router.message(Command("warn"), F.chat.type.in_(GROUP_TYPES))
@@ -113,7 +114,7 @@ async def group_warn(message: Message, bot, storage: Storage):
     settings = await storage.get_settings(message.chat.id)
     count = await storage.add_warning(message.chat.id, target)
     limit = int(settings.get("warn_limit", 3))
-    text = f"⚠️ {message.reply_to_message.from_user.full_name} — варн {count}/{limit}"
+    text = f"⚠️ {esc(message.reply_to_message.from_user.full_name)} — варн {count}/{limit}"
     if count >= limit:
         await storage.reset_warnings(message.chat.id, target)
         mute_min = int(settings.get("warn_mute_min", 60))
@@ -215,8 +216,8 @@ async def handle_violation(bot, storage: Storage, message: Message, rule: dict, 
     except Exception as exc:  # бот не админ, пользователь уже недоступен и т.п.
         await notify_admins(
             bot,
-            f"⚠️ Не смог наказать «{user_name}» (id {user.id}) в чате {chat_id}.\n"
-            f"Правило: {rule_obj.to_display()}\nОшибка: {exc}\n\n"
+            f"⚠️ Не смог наказать «{esc(user_name)}» (id {user.id}) в чате {chat_id}.\n"
+            f"Правило: {rule_obj.to_display()}\nОшибка: {esc(str(exc))}\n\n"
             "Проверь, что бот админ в этом чате.",
         )
         return
@@ -229,15 +230,15 @@ async def handle_violation(bot, storage: Storage, message: Message, rule: dict, 
 
     if settings.get("notify_group"):
         try:
-            await message.answer(f"⚠️ {user_name} — {rule_obj.label} → {result}")
+            await message.answer(f"⚠️ {esc(user_name)} — {rule_obj.label} → {result}")
         except Exception:
             pass
 
     await notify_admins(
         bot,
         f"⚠️ <b>Нарушение</b>\n"
-        f"Чат: {message.chat.title or chat_id}\n"
-        f"Пользователь: <a href=\"tg://user?id={user.id}\">{user_name}</a>\n"
+        f"Чат: {esc(message.chat.title or chat_id)}\n"
+        f"Пользователь: <a href=\"tg://user?id={user.id}\">{esc(user_name)}</a>\n"
         f"Правило: {rule_obj.to_display()}\n"
         f"Действие: {result}",
     )

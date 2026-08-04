@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from html import escape as _esc
 
 ACTIONS = {
     "mute": "мут",
@@ -33,7 +34,7 @@ class Rule:
     @property
     def label(self) -> str:
         if self.trigger_type == "word" and self.trigger_value:
-            return f"💬 «{self.trigger_value}»"
+            return f"💬 «{_esc(self.trigger_value)}»"
         return TRIGGER_LABELS.get(self.trigger_type, self.trigger_type)
 
     @property
