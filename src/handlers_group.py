@@ -254,7 +254,9 @@ async def group_mod_command(message: Message, bot, storage: Storage):
             "<code>/bban время причина</code> — бан\n"
             "<code>/mmute время причина</code> — мут\n"
             "<code>/kkick причина</code> — кик\n"
-            "<code>/wwarn время причина</code> — предупреждение",
+            "<code>/wwarn время причина</code> — предупреждение\n\n"
+            "Снять наказание (ответом):\n"
+            "<code>/unbban</code> <code>/unmmute</code> <code>/unkkick</code> <code>/unwwarn</code>",
             parse_mode=ParseMode.HTML,
         )
         return
@@ -304,28 +306,40 @@ async def group_mod_command(message: Message, bot, storage: Storage):
     )
 
 
-@router.message(Command("unmute", "unrestrict"), F.chat.type.in_(GROUP_TYPES))
+@router.message(Command("unmute", "unrestrict", "unmmute"), F.chat.type.in_(GROUP_TYPES))
 async def group_unmute(message: Message, bot):
     if not _is_admin(message.from_user):
         return
     target = await _reply_target(message)
     if not target:
-        await message.answer("Ответь на сообщение пользователя: /unmute")
+        await message.answer("Ответь на сообщение пользователя: /unmmute")
         return
     await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
     await message.answer("Мут снят")
 
 
-@router.message(Command("unban"), F.chat.type.in_(GROUP_TYPES))
+@router.message(Command("unban", "unbban", "unkkick"), F.chat.type.in_(GROUP_TYPES))
 async def group_unban(message: Message, bot):
     if not _is_admin(message.from_user):
         return
     target = await _reply_target(message)
     if not target:
-        await message.answer("Ответь на сообщение пользователя: /unban")
+        await message.answer("Ответь на сообщение пользователя: /unbban")
         return
     await bot.unban_chat_member(message.chat.id, target)
     await message.answer("Бан снят")
+
+
+@router.message(Command("unwarn", "unwwarn"), F.chat.type.in_(GROUP_TYPES))
+async def group_unwarn(message: Message, storage: Storage):
+    if not _is_admin(message.from_user):
+        return
+    target = await _reply_target(message)
+    if not target:
+        await message.answer("Ответь на сообщение пользователя: /unwwarn")
+        return
+    await storage.reset_warnings(message.chat.id, target)
+    await message.answer("Предупреждения сброшены")
 
 
 @router.message(Command("rules"), F.chat.type.in_(GROUP_TYPES))
