@@ -3,6 +3,7 @@
 import logging
 import re
 import time
+from collections import deque
 
 from aiogram import F, Router
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
@@ -99,6 +100,43 @@ def _detect_reward(text: str) -> int | None:
 # серии нарушений (флуд/спам) бот заваливает чат одинаковыми сообщениями.
 _recent_punish: dict[tuple[int, int], float] = {}
 _PUNISH_COOLDOWN = 45
+
+# Последние сообщения пользователей: при нарушении удаляем не одно сообщение,
+# а все недавние (текст, фото, пересылки) из этого чата.
+_recent_msgs: dict[tuple[int, int], deque] = {}
+_MAX_TRACKED_MSGS = 200
+_TRACK_WINDOW = 900  # сколько секунд храним сообщения для зачистки
+
+
+def _record_message(chat_id: int, user_id: int, msg_id: int) -> None:
+    key = (chat_id, user_id)
+    dq = _recent_msgs.setdefault(key, deque(maxlen=_MAX_TRACKED_MSGS))
+    dq.append((msg_id, time.time()))
+
+
+def _take_messages(chat_id: int, user_id: int) -> list[int]:
+    """Забирает (и очищает) недавние id сообщений пользователя в чате."""
+    dq = _recent_msgs.pop((chat_id, user_id), None)
+    if not dq:
+        return []
+    now = time.time()
+    return [mid for mid, ts in dq if now - ts <= _TRACK_WINDOW]
+
+
+async def _delete_messages_batch(bot, chat_id: int, ids: list[int]) -> None:
+    """Удаляет сообщения пакетами по 100 (лимит deleteMessages)."""
+    for start in range(0, len(ids), 100):
+        chunk = [i for i in ids[start:start + 100] if i]
+        if not chunk:
+            continue
+        try:
+            await bot.delete_messages(chat_id, chunk)
+        except Exception:
+            for mid in chunk:
+                try:
+                    await bot.delete_message(chat_id, mid)
+                except Exception:
+                    pass
 
 
 async def notify_admins(bot, text: str) -> None:
@@ -225,14 +263,14 @@ def _split_duration_reason(text: str) -> tuple[int | None, str]:
 
 def _punish_title(action: str, result: str) -> str:
     if action == "mute":
-        return "Пользователь замучен"
+        return "Пользователь замучен."
     if action == "ban":
-        return "Пользователь заблокирован"
+        return "Пользователь забанен."
     if action == "kick":
-        return "Пользователь исключён"
+        return "Пользователь исключён."
     if "бан" in result:
-        return "Пользователь заблокирован навсегда"
-    return "Пользователь получил предупреждение"
+        return "Пользователь забанен навсегда."
+    return "Пользователь получил предупреждение."
 
 
 _MOD_ACTIONS = {
@@ -315,7 +353,7 @@ async def group_unmute(message: Message, bot):
         await message.answer("Ответь на сообщение пользователя: /unmmute")
         return
     await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
-    await message.answer("Мут снят")
+    await message.answer("Пользователь размучен.")
 
 
 @router.message(Command("unbban", "unkkick"), F.chat.type.in_(GROUP_TYPES))
@@ -327,7 +365,7 @@ async def group_unban(message: Message, bot):
         await message.answer("Ответь на сообщение пользователя: /unbban")
         return
     await bot.unban_chat_member(message.chat.id, target)
-    await message.answer("Бан снят")
+    await message.answer("Пользователь разбанен.")
 
 
 @router.message(Command("unwwarn"), F.chat.type.in_(GROUP_TYPES))
@@ -339,7 +377,7 @@ async def group_unwarn(message: Message, storage: Storage):
         await message.answer("Ответь на сообщение пользователя: /unwwarn")
         return
     await storage.reset_warnings(message.chat.id, target)
-    await message.answer("Предупреждения сброшены")
+    await message.answer("Предупреждения пользователя сброшены.")
 
 
 @router.message(Command("rules"), F.chat.type.in_(GROUP_TYPES))
@@ -422,10 +460,9 @@ async def handle_violation(bot, storage: Storage, message: Message, rule: dict, 
     key = (chat_id, user.id)
     if now - _recent_punish.get(key, 0.0) < _PUNISH_COOLDOWN:
         if settings.get("delete_on_violation"):
-            try:
-                await message.delete()
-            except Exception:
-                pass
+            await _delete_messages_batch(
+                bot, chat_id, _take_messages(chat_id, user.id) + [message.message_id]
+            )
         return
     _recent_punish[key] = now
 
@@ -443,10 +480,9 @@ async def handle_violation(bot, storage: Storage, message: Message, rule: dict, 
         return
 
     if settings.get("delete_on_violation"):
-        try:
-            await message.delete()
-        except Exception:
-            pass
+        await _delete_messages_batch(
+            bot, chat_id, _take_messages(chat_id, user.id) + [message.message_id]
+        )
 
     if settings.get("notify_group"):
         try:
@@ -513,6 +549,10 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
     await storage.upsert_chat(chat_id, message.chat.title or "", message.chat.username or "")
 
     user = message.from_user
+    if _is_admin(user):
+        return  # владельца бота не наказываем и не отслеживаем
+    _record_message(chat_id, user.id, message.message_id)
+
     settings = await storage.get_settings(chat_id)
     rules = await storage.get_rules(chat_id)
     if not rules:
