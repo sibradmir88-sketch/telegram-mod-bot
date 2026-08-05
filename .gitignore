@@ -4,3 +4,4 @@ __pycache__/
 moderator.db
 .venv/
 venv/
+venv-win/

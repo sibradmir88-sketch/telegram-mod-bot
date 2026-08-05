@@ -13,11 +13,28 @@ ACTIONS = {
 SEVERITY = {"warn": 1, "kick": 2, "mute": 3, "ban": 4}
 
 TRIGGER_LABELS = {
-    "flood": "🌊 флуд",
-    "links": "🔗 ссылки/реклама",
-    "mat": "🤬 мат",
-    "spam": "🔁 повтор/спам",
-    "word": "💬 слово",
+    "flood": "Флуд",
+    "spam": "Спам и повторы",
+    "links": "Ссылки и реклама",
+    "mat": "Мат",
+    "insult": "Оскорбления и травля",
+    "threat": "Угрозы и шантаж",
+    "scam": "Мошенничество и обман",
+    "nsfw": "Контент 18+",
+    "pii": "Чужие данные",
+    "caps": "Капс",
+    "emoji": "Флуд эмодзи",
+    "nonsense": "Бессмыслица",
+    "ai": "Нейро-модерация",
+    "word": "Слово",
+}
+
+# Семантические триггеры, которые лучше всего ловятся нейросетью
+AI_TRIGGERS = {"ai"}
+
+# Триггеры, обрабатываемые локальными детекторами из detect.py
+LOCAL_TEXT_TRIGGERS = {
+    "links", "mat", "insult", "threat", "scam", "nsfw", "pii", "caps", "emoji", "nonsense",
 }
 
 
@@ -30,11 +47,12 @@ class Rule:
     action: str
     duration: int | None  # секунды или None = навсегда
     created_at: int
+    raw_text: str | None = None
 
     @property
     def label(self) -> str:
-        if self.trigger_type == "word" and self.trigger_value:
-            return f"💬 «{_esc(self.trigger_value)}»"
+        if self.trigger_type in ("word", "ai") and self.trigger_value:
+            return f"«{_esc(self.trigger_value)}»"
         return TRIGGER_LABELS.get(self.trigger_type, self.trigger_type)
 
     @property
@@ -45,7 +63,17 @@ class Rule:
         return act
 
     def to_display(self) -> str:
-        return f"{self.label} → {self.action_label}"
+        # Если в правиле несколько вариантов наказания («мут 1-6 часов / бан»)
+        # — показываем их все, чтобы было видно, что выбирает нейросеть.
+        if self.raw_text:
+            _left, right = _split_left_right(self.raw_text)
+            if right and ("/" in right or "(" in right):
+                return f"{self.label} — {right.strip()[:140]}"
+        return f"{self.label} — {self.action_label}"
+
+    def to_context(self) -> str:
+        """Строка правила для нейросети: описание + наказание с вариантами."""
+        return self.raw_text or f"{self.label} — {self.action_label}"
 
     @classmethod
     def from_dict(cls, d: dict) -> "Rule":
@@ -57,6 +85,7 @@ class Rule:
             action=str(d.get("action") or ""),
             duration=d.get("duration"),
             created_at=int(d.get("created_at") or 0),
+            raw_text=d.get("raw_text"),
         )
 
 
@@ -124,6 +153,69 @@ def format_duration(seconds: int | None) -> str:
 
 # ---------------------------------------------------------------- parsing
 
+_BULLET_RE = re.compile(r"^[^А-Яа-яЁёA-Za-z0-9«\"]+")
+
+
+def _split_left_right(text: str) -> tuple[str | None, str | None]:
+    """Разделяет «нарушение ... наказание» по «Наказание:» или «-»."""
+    m = re.search(r"наказание\s*[:»]?", text, re.I)
+    if m:
+        left = text[: m.start()]
+        right = text[m.end():]
+        return left, right
+    if "-" in text:
+        left, right = text.split("-", 1)
+        return left, right
+    return None, None
+
+
+def _clean_left(left: str) -> str:
+    left = left.strip()
+    left = _BULLET_RE.sub("", left)
+    return left.strip(" .,;:»«\"").strip()
+
+
+def _detect_trigger(left: str) -> tuple[str, str | None]:
+    """По тексту нарушения выбирает тип детектора."""
+    l = left.lower()
+    if l.startswith(("слово:", "word:", "слова:", "фраза:", "phrase:")):
+        return "word", l.split(":", 1)[1].strip()
+    if "флуд" in l or l == "flood":
+        return "flood", None
+    if "капс" in l or "заглавн" in l or "криком" in l:
+        return "caps", None
+    if any(k in l for k in ("эмодзи", "эмоджи", "смайл")):
+        return "emoji", None
+    if any(k in l for k in ("повтор", "однообразн", "дословно")):
+        return "spam", None
+    if any(k in l for k in ("ссылк", "линк", "реклам", "самопиар", "юзернейм",
+                            "username", "упоминание", "мёнт")):
+        return "links", None
+    if re.search(r"(?<![а-яёa-z])мат(?![а-яёa-z])", l) or "нецензур" in l or "матерщин" in l or "бран" in l:
+        return "mat", None
+    if any(k in l for k in ("угроз", "шантаж", "запугиван")):
+        return "threat", None
+    if any(k in l for k in ("оскорб", "травл", "униж", "буллинг", "обид", "хам")):
+        return "insult", None
+    if any(k in l for k in ("мошен", "обман", "лохотрон", "афёр")):
+        return "scam", None
+    if any(k in l for k in ("18+", "контент 18", "порн", "шокирующ", "насил",
+                            "жесток", "эрот")):
+        return "nsfw", None
+    if any(k in l for k in ("чужие данные", "личные данные", "персональн", "паспорт",
+                            "банковск", "номер карт", "публикуйте")):
+        return "pii", None
+    if any(k in l for k in ("бессмыслен", "бессвязн", "мусор")):
+        return "nonsense", None
+    if any(k in l for k in ("ложную информац", "слух", "фейк", "ложные сведен")):
+        return "ai", left
+    if any(k in l for k in ("конфликт", "провоцир", "разжига", "ссор")):
+        return "ai", left
+    if "спам" in l:
+        return "spam", None
+    return "word", left
+
+
 def parse_rule(raw: str) -> tuple[Rule | None, str | None]:
     """Возвращает (Rule, None) при успехе либо (None, ошибка)."""
     text = (
@@ -133,31 +225,17 @@ def parse_rule(raw: str) -> tuple[Rule | None, str | None]:
         .replace("→", "-")
         .replace("=>", "-")
     )
-    if "-" not in text:
-        return None, (
-            "Не нашёл разделитель «-».\n\n"
-            "Формат: нарушение - наказание\n"
-            "Например: флуд - мут 1 час"
-        )
-    left, right = text.split("-", 1)
-    left = left.strip().lower()
-    right = right.strip().lower()
+    left, right = _split_left_right(text)
+    if left is None:
+        # Нет разделителя «-»/«Наказание:» — это заголовок/оформление, а не правило.
+        return None, None
+    left = _clean_left(left).lower()
+    right = (right or "").strip(" .,;:»«\"\n").lower()
     if not left or not right:
         return None, "Пустое нарушение или наказание. Формат: нарушение - наказание"
 
     # --- что отслеживаем
-    if left.startswith(("слово:", "word:", "слова:", "фраза:", "phrase:")):
-        trigger_type, trigger_value = "word", left.split(":", 1)[1].strip()
-    elif "флуд" in left or left == "flood":
-        trigger_type, trigger_value = "flood", None
-    elif any(k in left for k in ("ссылк", "линк", "реклам", "юзернейм", "username", "упоминание", "тег", "мёнт")):
-        trigger_type, trigger_value = "links", None
-    elif "мат" in left or "нецензур" in left or "матерщин" in left:
-        trigger_type, trigger_value = "mat", None
-    elif "повтор" in left or left in ("спам", "спам-сообщ"):
-        trigger_type, trigger_value = "spam", None
-    else:
-        trigger_type, trigger_value = "word", left
+    trigger_type, trigger_value = _detect_trigger(left)
 
     # --- что делаем
     if "мут" in right:
@@ -169,10 +247,14 @@ def parse_rule(raw: str) -> tuple[Rule | None, str | None]:
     elif "варн" in right or "предупрежд" in right or right.startswith("пред"):
         action = "warn"
     else:
-        return None, (
-            "Не понял наказание.\n\nИспользуй одно из: "
-            "🔇 мут, ⛔️ бан, 👢 кик, ⚠️ варн (предупреждение)."
-        )
+        # Правило без наказания («Уважайте каждого — приятная атмосфера»).
+        # Общие фразы делаем нейро-правилом (ИИ оценивает по тексту),
+        # остальные триггеры наказываем предупреждением по умолчанию.
+        if trigger_type == "word" and not left.startswith(
+            ("слово:", "word:", "слова:", "фраза:", "phrase:")
+        ):
+            trigger_type, trigger_value = "ai", left
+        action = "warn"
 
     duration = parse_duration(right)
     if action == "mute" and duration is None and not any(
@@ -190,25 +272,61 @@ def parse_rule(raw: str) -> tuple[Rule | None, str | None]:
         action=action,
         duration=duration,
         created_at=0,
+        raw_text=raw.strip(),
     )
     return rule, None
 
 
+def parse_rules_bulk(raw: str) -> tuple[list[Rule], list[str]]:
+    """Разбирает блок правил (по строке на правило). Возвращает (правила, ошибки)."""
+    rules: list[Rule] = []
+    errors: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        rule, err = parse_rule(line)
+        if rule is None:
+            if err:
+                errors.append(f"«{line[:60]}» — {err}")
+            continue  # заголовки/оформление пропускаем молча
+        rules.append(rule)
+    return rules, errors
+
+
 # ---------------------------------------------------------------- matching
 
-_URL_RE = re.compile(r"(https?://|www\.|t\.me/|telegram\.me/|@[a-zA-Z0-9_]{4,})", re.I)
-
-from .profanity import contains_profanity  # noqa: E402
+from . import detect  # noqa: E402
 
 
 def rule_matches_text(rule: Rule, text: str) -> bool:
-    """Проверка текстовых правил (word / links / mat)."""
-    if rule.trigger_type == "word":
+    """Проверка текстовых правил. Семантические (ai) возвращают False —
+    их оценивает нейромодуль в handlers_group."""
+    t = rule.trigger_type
+    if t == "word":
         return bool(rule.trigger_value) and rule.trigger_value.lower() in text.lower()
-    if rule.trigger_type == "links":
-        return bool(_URL_RE.search(text))
-    if rule.trigger_type == "mat":
-        return contains_profanity(text)
+    if t == "links":
+        return detect.has_links(text)
+    if t == "mat":
+        return detect.has_profanity(text)
+    if t == "insult":
+        # Упоминание «мошенник/абуз/скам» в жалобе — не оскорбление.
+        return detect.has_insult(text) and not detect.has_meta_mention(text)
+    if t == "threat":
+        return detect.has_threat(text)
+    if t == "scam":
+        # Предупреждение про «мошенника/скам» само по себе не спам.
+        return detect.has_scam(text) and not detect.has_meta_mention(text)
+    if t == "nsfw":
+        return detect.has_nsfw(text)
+    if t == "pii":
+        return detect.has_pii(text)
+    if t == "caps":
+        return detect.has_caps(text)
+    if t == "emoji":
+        return detect.has_many_emoji(text)
+    if t == "nonsense":
+        return detect.is_gibberish(text)
     return False
 
 

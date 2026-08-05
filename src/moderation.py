@@ -26,8 +26,13 @@ async def is_protected(bot, chat_id: int, user_id: int) -> bool:
 
 
 async def apply_punishment(bot, storage, chat_id: int, user_id: int,
-                           action: str, duration: int | None, settings: dict) -> str:
-    """Применяет наказание. Возвращает человекочитаемый результат."""
+                           action: str, duration: int | None, settings: dict,
+                           expiry: int | None = None) -> str:
+    """Применяет наказание. Возвращает человекочитаемый результат.
+
+    expiry — для action='warn': абсолютная метка времени, когда варн
+    автоматически снимется (None — пока не соберётся лимит).
+    """
     if action == "mute":
         until = int(time.time()) + duration if duration else None
         await bot.restrict_chat_member(
@@ -35,34 +40,31 @@ async def apply_punishment(bot, storage, chat_id: int, user_id: int,
             permissions=ChatPermissions(can_send_messages=False),
             until_date=until,
         )
-        return f"🔇 мут {format_duration(duration)}"
+        return f"Мут на {format_duration(duration)}"
 
     if action == "ban":
         until = int(time.time()) + duration if duration else None
         await bot.ban_chat_member(chat_id, user_id, until_date=until)
-        return f"⛔️ бан {format_duration(duration)}"
+        return f"Бан на {format_duration(duration)}"
 
     if action == "kick":
         await bot.ban_chat_member(chat_id, user_id, revoke_messages=False)
         await bot.unban_chat_member(chat_id, user_id)
-        return "👢 кик"
+        return "Кик"
 
     if action == "warn":
-        count = await storage.add_warning(chat_id, user_id)
+        count = await storage.add_warning(chat_id, user_id, expiry)
         limit = int(settings.get("warn_limit", 3))
         if count >= limit:
             await storage.reset_warnings(chat_id, user_id)
-            mute_min = int(settings.get("warn_mute_min", 60))
-            until = int(time.time()) + mute_min * 60
-            await bot.restrict_chat_member(
-                chat_id, user_id,
-                permissions=ChatPermissions(can_send_messages=False),
-                until_date=until,
-            )
-            return f"⚠️ {count}/{limit} варнов → 🔇 мут {mute_min} мин"
-        return f"⚠️ варн {count}/{limit}"
+            await bot.ban_chat_member(chat_id, user_id)
+            return f"Варн {count}/{limit} — бан навсегда"
+        if expiry:
+            left = max(0, int(expiry) - int(time.time()))
+            return f"Варн {count}/{limit} · снимется через {format_duration(left)}"
+        return f"Варн {count}/{limit}"
 
-    return "🤔 наказание не найдено"
+    return "Наказание не найдено"
 
 
 class Trackers:

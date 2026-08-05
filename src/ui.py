@@ -1,4 +1,4 @@
-"""Красивые клавиатуры и тексты интерфейса."""
+"""Красивые клавиатуры и тексты интерфейса (без эмодзи)."""
 
 from html import escape as _esc
 
@@ -10,48 +10,78 @@ def esc(value) -> str:
     """Экранирование HTML в пользовательских строках."""
     return _esc(str(value), quote=False)
 
+
+DEFAULT_GREETING = (
+    "Привет, {name}! Добро пожаловать в чат «{chat}»! "
+    "Здесь дружелюбная компания и свои правила — загляни в них, "
+    "и приятного общения!"
+)
+
+
+def render_greeting(template: str, name: str, username: str, chat_title: str) -> str:
+    """Подставляет имя, ник и название чата в шаблон приветствия."""
+    return (
+        template.replace("{name}", name)
+        .replace("{username}", username)
+        .replace("{chat}", chat_title or "наш чат")
+    )
+
+
 WELCOME_TEXT = (
-    "👋 Привет, босс!\n\n"
-    "Я — <b>ModeratorBot</b> — твой личный модератор для Telegram-чатов 🤖\n\n"
-    "Что я умею:\n"
-    "🔹 Слежу за чатами 24/7 по твоим правилам\n"
-    "🔹 Мгновенно наказываю за флуд, рекламу, мат и другое\n"
-    "🔹 Работаю сразу в нескольких чатах\n"
-    "🔹 Отвечаю только тебе — остальных игнорирую\n\n"
-    "Нажми кнопку, чтобы начать 👇"
+    "<b>Привет, босс!</b>\n\n"
+    "Я — <b>desacratio Helper</b> — твой персональный модератор для Telegram-чатов.\n\n"
+    "<b>Что я умею:</b>\n"
+    "• Слежу за чатами 24/7 по твоим правилам\n"
+    "• Ловлю флуд, спам, рекламу, мат, капс и эмодзи-флуд\n"
+    "• Умею работать с несколькими чатами сразу\n"
+    "• Отвечаю только тебе — остальных игнорирую\n\n"
+    "Нажми кнопку, чтобы начать"
 )
 
 HELP_TEXT = (
-    "📖 <b>Помощь</b>\n\n"
+    "<b>Помощь</b>\n\n"
     "<b>Как подключить чат:</b>\n"
-    "1️⃣ Добавь меня в свой чат\n"
-    "2️⃣ Назначь меня администратором (дать все права)\n"
-    "3️⃣ Нажми «➕ Добавить чат» и выбери чат\n"
-    "4️⃣ Добавь правила через «➕ Добавить правило»\n\n"
+    "1. Добавь меня в свой чат\n"
+    "2. Назначь меня <b>администратором</b> (дай все права)\n"
+    "3. Нажми «Добавить чат» и выбери чат\n"
+    "4. Добавь правила через «Добавить правило»\n\n"
     "<b>Формат правила:</b>\n"
     "<code>нарушение - наказание</code>\n\n"
-    "Примеры:\n"
+    "<b>Примеры:</b>\n"
     "• <code>флуд - мут 1 час</code>\n"
     "• <code>реклама - бан</code>\n"
     "• <code>мат - мут 30 минут</code>\n"
     "• <code>слово:айпи - кик</code>\n"
     "• <code>спам - мут 2 часа</code>\n\n"
-    "Наказания: 🔇 мут, ⛔️ бан, 👢 кик, ⚠️ варн.\n"
-    "Длительность: 30 минут, 2 часа, 1 день, навсегда.\n\n"
-    "В чате также работают команды:\n"
-    "<code>/mute</code>, <code>/ban</code>, <code>/kick</code>, "
-    "<code>/warn</code>, <code>/unmute</code>, <code>/unban</code>, "
-    "<code>/rules</code>, <code>/addrule</code>, <code>/delrule</code>"
+    "Можно отправить <b>целый блок правил</b> — я разберу каждую строку сам!\n\n"
+    "<b>Наказания:</b>\n"
+    "<b>мут</b> · <b>бан</b> · <b>кик</b> · <b>варн</b>\n\n"
+    "<b>Длительность:</b> 30 минут, 2 часа, 1 день, навсегда…\n\n"
+    "<b>В чате работают команды (ответь на сообщение нарушителя):</b>\n"
+    "<code>/bban время причина</code> — бан\n"
+    "<code>/mmute время причина</code> — мут\n"
+    "<code>/kkick причина</code> — кик\n"
+    "<code>/wwarn время причина</code> — предупреждение\n\n"
+     "<b>После трёх предупреждений — бан навсегда.</b> "
+     "Предупреждения автоматически снимаются, если указать время.\n\n"
+     "<b>Конкурс комментариев:</b>\n"
+     "<code>/reward 44</code> — до 44-го комментария бот не трогает флуд и спам\n"
+     "<code>/rewardstop</code> — остановить конкурс и вернуть модерацию\n\n"
+     "<b>Приветствия новичкам:</b> включаются в «Настройки» чата — "
+     "можно поменять текст или вернуть стандартный.\n\n"
+     "Прочие команды:\n"
+     "<code>/unmute</code> <code>/unban</code> <code>/rules</code>\n"
+     "<code>/addrule</code> <code>/delrule</code>"
 )
 
 
 def main_menu() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="📜 Правила", callback_data="menu:rules")
-    b.button(text="➕ Добавить чат", callback_data="menu:addchat")
-    b.button(text="➕ Добавить правило", callback_data="menu:addrule")
-    b.button(text="⚙️ Настройки", callback_data="menu:settings")
-    b.button(text="❌ Удалить чат", callback_data="menu:delchat")
+    b.button(text="Правила", callback_data="menu:rules")
+    b.button(text="Добавить чат", callback_data="menu:addchat")
+    b.button(text="Добавить правило", callback_data="menu:addrule")
+    b.button(text="Настройки", callback_data="menu:settings")
+    b.button(text="Удалить чат", callback_data="menu:delchat")
     b.adjust(2)
     return b.as_markup()
 
@@ -60,9 +90,9 @@ def chat_list_keyboard(chats: list[dict], action: str, back: str = "back:menu") 
     b = InlineKeyboardBuilder()
     for c in chats:
         title = (c.get("title") or f"чат {c.get('chat_id')}")[:40]
-        mark = "✅" if c.get("enabled") else "⬜️"
-        b.button(text=f"{mark} {title}", callback_data=f"{action}:{c['chat_id']}")
-    b.button(text="🔙 Назад", callback_data=back)
+        mark = "• " if c.get("enabled") else ""
+        b.button(text=f"{mark}{title}", callback_data=f"{action}:{c['chat_id']}")
+    b.button(text="Назад", callback_data=back)
     b.adjust(1)
     return b.as_markup()
 
@@ -74,32 +104,54 @@ def rules_keyboard(rules: list[dict], chat_id: int, enabled: bool) -> InlineKeyb
 
         rule = Rule.from_dict(r)
         b.button(
-            text=f"✖️ {r['id']} · {rule.to_display()}",
+            text=f"{r['id']} · {rule.to_display()}",
             callback_data=f"delrule:{r['id']}",
         )
-    b.button(text="➕ Добавить правило", callback_data=f"addrule2:{chat_id}")
+    b.button(text="Добавить правило", callback_data=f"addrule2:{chat_id}")
     b.button(
-        text="⏸ На паузу" if enabled else "▶️ Включить",
+        text="Включить" if not enabled else "На паузе",
         callback_data=f"togglechat:{chat_id}",
     )
-    b.button(text="⚙️ Настройки", callback_data=f"settings:{chat_id}")
-    b.button(text="🔙 Назад", callback_data="menu:rules")
+    b.button(text="Настройки", callback_data=f"settings:{chat_id}")
+    b.button(text="Назад", callback_data="menu:rules")
     b.adjust(1)
     return b.as_markup()
 
 
 def settings_text(s: dict, chat: dict | None) -> str:
     title = esc((chat and chat.get("title")) or s["chat_id"])
-    on = lambda v: "✅" if v else "❌"  # noqa: E731
+    on = lambda v: "вкл" if v else "выкл"  # noqa: E731
+    ai_warn = ""
+    if int(s["ai_mode"]) == 1:
+        from . import aimod
+
+        if not aimod.is_configured():
+            ai_warn = (
+                "\nДля умного режима нужны AI_API_URL и AI_API_KEY в .env — пока он не работает."
+            )
+    greeting_preview = ""
+    if int(s.get("greeting_enabled", 0)):
+        tmpl = s.get("greeting_text") or DEFAULT_GREETING
+        preview = " ".join(tmpl.split())
+        if len(preview) > 70:
+            preview = preview[:70] + "…"
+        greeting_preview = f"\n<b>Текст:</b> «{esc(preview)}»"
+
     return (
-        f"⚙️ Настройки чата «{title}»\n\n"
-        f"🗑 Удалять нарушение: {on(s['delete_on_violation'])}\n"
-        f"🔔 Уведомлять в чате: {on(s['notify_group'])}\n"
-        f"👮 Наказывать админов: {on(s['punish_admins'])}\n"
-        f"⚠️ Лимит варнов: {s['warn_limit']}\n"
-        f"🔇 Мут после лимита варнов: {s['warn_mute_min']} мин\n"
-        f"🌊 Флуд: {s['flood_messages']} сообщ. за {s['flood_seconds']} сек\n"
-        f"🔁 Спам: {s['spam_messages']} повтора за {s['spam_seconds']} сек"
+        f"<b>Настройки чата</b> «{title}»\n\n"
+        f"<b>Удалять нарушение:</b> {on(s['delete_on_violation'])}\n"
+        f"<b>Уведомлять в чате:</b> {on(s['notify_group'])}\n"
+        f"<b>Наказывать админов:</b> {on(s['punish_admins'])}\n\n"
+        f"<b>Лимит предупреждений:</b> {s['warn_limit']}\n"
+        f"После лимита — бан навсегда.\n\n"
+        f"<b>Флуд:</b> {s['flood_messages']} сообщений за {s['flood_seconds']} сек\n"
+        f"<b>Спам:</b> {s['spam_messages']} повторов за {s['spam_seconds']} сек\n\n"
+        f"<b>Умная модерация:</b> {on(s['ai_mode'])}\n"
+        f"<b>AI-проверка не чаще:</b> {s['ai_cooldown']} сек на пользователя"
+        f"{ai_warn}\n\n"
+        f"<b>Приветствия новичкам:</b> {on(s.get('greeting_enabled', 0))}"
+        f"{greeting_preview}\n\n"
+        "Чтобы задать точное число — нажми кнопку с числом и введи значение."
     )
 
 
@@ -107,29 +159,45 @@ def settings_keyboard(s: dict) -> InlineKeyboardMarkup:
     cid = s["chat_id"]
     b = InlineKeyboardBuilder()
     b.button(
-        text=f"🗑 Удалять нарушение: {'✅' if s['delete_on_violation'] else '❌'}",
+        text=f"Удалять нарушение: {'вкл' if s['delete_on_violation'] else 'выкл'}",
         callback_data=f"set:{cid}:delete_on_violation:{1 - s['delete_on_violation']}",
     )
     b.button(
-        text=f"🔔 Уведомлять в чате: {'✅' if s['notify_group'] else '❌'}",
+        text=f"Уведомлять в чате: {'вкл' if s['notify_group'] else 'выкл'}",
         callback_data=f"set:{cid}:notify_group:{1 - s['notify_group']}",
     )
     b.button(
-        text=f"👮 Наказывать админов: {'✅' if s['punish_admins'] else '❌'}",
+        text=f"Наказывать админов: {'вкл' if s['punish_admins'] else 'выкл'}",
         callback_data=f"set:{cid}:punish_admins:{1 - s['punish_admins']}",
     )
-    b.button(text="⚠️ Варн −", callback_data=f"set:{cid}:warn_limit:{max(1, s['warn_limit'] - 1)}")
-    b.button(text="⚠️ Варн +", callback_data=f"set:{cid}:warn_limit:{min(10, s['warn_limit'] + 1)}")
-    b.button(text="🔇 Мут-мин −", callback_data=f"set:{cid}:warn_mute_min:{max(1, s['warn_mute_min'] - 5)}")
-    b.button(text="🔇 Мут-мин +", callback_data=f"set:{cid}:warn_mute_min:{min(1440, s['warn_mute_min'] + 5)}")
-    b.button(text="🌊 Флуд −", callback_data=f"set:{cid}:flood_messages:{max(2, s['flood_messages'] - 1)}")
-    b.button(text="🌊 Флуд +", callback_data=f"set:{cid}:flood_messages:{min(30, s['flood_messages'] + 1)}")
-    b.button(text="🌊 Окно −", callback_data=f"set:{cid}:flood_seconds:{max(5, s['flood_seconds'] - 5)}")
-    b.button(text="🌊 Окно +", callback_data=f"set:{cid}:flood_seconds:{min(120, s['flood_seconds'] + 5)}")
-    b.button(text="🔁 Спам −", callback_data=f"set:{cid}:spam_messages:{max(2, s['spam_messages'] - 1)}")
-    b.button(text="🔁 Спам +", callback_data=f"set:{cid}:spam_messages:{min(20, s['spam_messages'] + 1)}")
-    b.button(text="🔁 Окно −", callback_data=f"set:{cid}:spam_seconds:{max(5, s['spam_seconds'] - 5)}")
-    b.button(text="🔁 Окно +", callback_data=f"set:{cid}:spam_seconds:{min(120, s['spam_seconds'] + 5)}")
-    b.button(text="🔙 Назад", callback_data="back:menu")
+
+    _num_row(b, cid, "warn_limit", "Лимит предупреждений", s["warn_limit"], 1, 1, 999)
+    _num_row(b, cid, "flood_messages", "Флуд, сообщений", s["flood_messages"], 1, 1, 100)
+    _num_row(b, cid, "flood_seconds", "Флуд, окно сек", s["flood_seconds"], 5, 1, 3600)
+    _num_row(b, cid, "spam_messages", "Спам, повторов", s["spam_messages"], 1, 1, 50)
+    _num_row(b, cid, "spam_seconds", "Спам, окно сек", s["spam_seconds"], 5, 1, 3600)
+
+    b.button(
+        text=f"Умная модерация: {'вкл' if s['ai_mode'] else 'выкл'}",
+        callback_data=f"set:{cid}:ai_mode:{1 - s['ai_mode']}",
+    )
+    _num_row(b, cid, "ai_cooldown", "AI-проверка, сек", s["ai_cooldown"], 5, 1, 3600)
+
+    b.button(
+        text=f"Приветствия новичкам: {'вкл' if s['greeting_enabled'] else 'выкл'}",
+        callback_data=f"set:{cid}:greeting_enabled:{1 - s['greeting_enabled']}",
+    )
+    if s["greeting_enabled"]:
+        b.button(text="Изменить приветствие", callback_data=f"greeting:{cid}")
+        b.button(text="Сбросить (стандарт)", callback_data=f"greetingres:{cid}")
+
+    b.button(text="В меню", callback_data="back:menu")
     b.adjust(1)
     return b.as_markup()
+
+
+def _num_row(b: InlineKeyboardBuilder, cid: int, key: str, label: str,
+             value: int, step: int, lo: int, hi: int) -> None:
+    b.button(text=f"- {label}", callback_data=f"set:{cid}:{key}:{max(lo, value - step)}")
+    b.button(text=f"{value}", callback_data=f"setin:{cid}:{key}")
+    b.button(text=f"+ {label}", callback_data=f"set:{cid}:{key}:{min(hi, value + step)}")

@@ -33,12 +33,14 @@ CREATE TABLE IF NOT EXISTS rules (
     trigger_value TEXT,
     action TEXT NOT NULL,
     duration INTEGER,
+    raw_text TEXT,
     created_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS warnings (
     chat_id INTEGER,
     user_id INTEGER,
     count INTEGER DEFAULT 0,
+    expires_at INTEGER DEFAULT 0,
     PRIMARY KEY (chat_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -47,11 +49,16 @@ CREATE TABLE IF NOT EXISTS settings (
     notify_group INTEGER DEFAULT 1,
     warn_limit INTEGER DEFAULT 3,
     warn_mute_min INTEGER DEFAULT 60,
+    warn_after INTEGER DEFAULT 0,
     flood_messages INTEGER DEFAULT 5,
     flood_seconds INTEGER DEFAULT 10,
     spam_messages INTEGER DEFAULT 3,
     spam_seconds INTEGER DEFAULT 20,
-    punish_admins INTEGER DEFAULT 0
+    punish_admins INTEGER DEFAULT 0,
+    ai_mode INTEGER DEFAULT 0,
+    ai_cooldown INTEGER DEFAULT 20,
+    greeting_enabled INTEGER DEFAULT 0,
+    greeting_text TEXT
 );
 """
 
@@ -70,12 +77,14 @@ CREATE TABLE IF NOT EXISTS rules (
     trigger_value TEXT,
     action TEXT NOT NULL,
     duration BIGINT,
+    raw_text TEXT,
     created_at BIGINT
 );
 CREATE TABLE IF NOT EXISTS warnings (
     chat_id BIGINT,
     user_id BIGINT,
     count INTEGER DEFAULT 0,
+    expires_at BIGINT DEFAULT 0,
     PRIMARY KEY (chat_id, user_id)
 );
 CREATE TABLE IF NOT EXISTS settings (
@@ -84,13 +93,20 @@ CREATE TABLE IF NOT EXISTS settings (
     notify_group INTEGER DEFAULT 1,
     warn_limit INTEGER DEFAULT 3,
     warn_mute_min INTEGER DEFAULT 60,
+    warn_after INTEGER DEFAULT 0,
     flood_messages INTEGER DEFAULT 5,
     flood_seconds INTEGER DEFAULT 10,
     spam_messages INTEGER DEFAULT 3,
     spam_seconds INTEGER DEFAULT 20,
-    punish_admins INTEGER DEFAULT 0
+    punish_admins INTEGER DEFAULT 0,
+    ai_mode INTEGER DEFAULT 0,
+    ai_cooldown INTEGER DEFAULT 20,
+    greeting_enabled INTEGER DEFAULT 0,
+    greeting_text TEXT
 );
 """
+
+SQLITE_PATH = "moderator.db"
 
 VALID_SETTING_KEYS = {
     "delete_on_violation",
@@ -98,10 +114,14 @@ VALID_SETTING_KEYS = {
     "punish_admins",
     "warn_limit",
     "warn_mute_min",
+    "warn_after",
     "flood_messages",
     "flood_seconds",
     "spam_messages",
     "spam_seconds",
+    "ai_mode",
+    "ai_cooldown",
+    "greeting_enabled",
 }
 
 DEFAULT_SETTINGS = {
@@ -110,11 +130,16 @@ DEFAULT_SETTINGS = {
     "notify_group": 1,
     "warn_limit": DEFAULT_WARN_LIMIT,
     "warn_mute_min": DEFAULT_WARN_MUTE_MIN,
+    "warn_after": 0,
     "flood_messages": DEFAULT_FLOOD_MESSAGES,
     "flood_seconds": DEFAULT_FLOOD_SECONDS,
     "spam_messages": DEFAULT_SPAM_MESSAGES,
     "spam_seconds": DEFAULT_SPAM_SECONDS,
     "punish_admins": 0,
+    "ai_mode": 0,
+    "ai_cooldown": 20,
+    "greeting_enabled": 0,
+    "greeting_text": "",
 }
 
 
@@ -145,14 +170,50 @@ class Storage:
             self._dialect = "postgres"
             self._pg = await asyncpg.connect(DATABASE_URL)
             await self._pg.execute(POSTGRES_SCHEMA)
+            for col, default in (("warn_after", "0"), ("ai_mode", "0"), ("ai_cooldown", "20"),
+                                 ("greeting_enabled", "0")):
+                await self._pg.execute(
+                    f"ALTER TABLE settings ADD COLUMN IF NOT EXISTS {col} INTEGER DEFAULT {default}"
+                )
+            await self._pg.execute("ALTER TABLE settings ADD COLUMN IF NOT EXISTS greeting_text TEXT")
+            await self._pg.execute("ALTER TABLE rules ADD COLUMN IF NOT EXISTS raw_text TEXT")
+            await self._pg.execute(
+                "ALTER TABLE warnings ADD COLUMN IF NOT EXISTS expires_at BIGINT DEFAULT 0"
+            )
         else:
             import aiosqlite
 
             self._dialect = "sqlite"
-            self._sqlite = await aiosqlite.connect("moderator.db")
+            self._sqlite = await aiosqlite.connect(SQLITE_PATH)
             self._sqlite.row_factory = aiosqlite.Row
             await self._sqlite.executescript(SQLITE_SCHEMA)
             await self._sqlite.commit()
+            await self._migrate_sqlite()
+
+    async def _migrate_sqlite(self) -> None:
+        """Добавляет отсутствующие колонки в существующие таблицы."""
+        if self._sqlite is None:
+            return
+        tables = {
+            "settings": {
+                "warn_after": "INTEGER DEFAULT 0",
+                "ai_mode": "INTEGER DEFAULT 0",
+                "ai_cooldown": "INTEGER DEFAULT 20",
+                "greeting_enabled": "INTEGER DEFAULT 0",
+                "greeting_text": "TEXT",
+            },
+            "rules": {"raw_text": "TEXT"},
+            "warnings": {"expires_at": "INTEGER DEFAULT 0"},
+        }
+        for table, cols in tables.items():
+            cur = await self._sqlite.execute(f"PRAGMA table_info({table})")
+            rows = await cur.fetchall()
+            await cur.close()
+            existing = {row["name"] for row in rows}
+            for col, ddl in cols.items():
+                if col not in existing:
+                    await self._sqlite.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+        await self._sqlite.commit()
 
     async def _execute(self, sql: str, *params):
         sql = _adapt(sql, self._dialect)
@@ -208,21 +269,21 @@ class Storage:
     # ---------------------------------------------------------- rules
 
     async def add_rule(self, chat_id: int, trigger_type: str, trigger_value: str | None,
-                       action: str, duration: int | None) -> int:
-        params = (int(chat_id), trigger_type, trigger_value, action, duration, int(time.time()))
+                       action: str, duration: int | None, raw_text: str | None = None) -> int:
+        params = (int(chat_id), trigger_type, trigger_value, action, duration, raw_text, int(time.time()))
         if self._dialect == "postgres":
             row = await self._pg.fetchrow(
                 _adapt(
-                    "INSERT INTO rules (chat_id, trigger_type, trigger_value, action, duration, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
+                    "INSERT INTO rules (chat_id, trigger_type, trigger_value, action, duration, raw_text, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
                     "postgres",
                 ),
                 *params,
             )
             return int(row["id"])
         cur = await self._sqlite.execute(
-            "INSERT INTO rules (chat_id, trigger_type, trigger_value, action, duration, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO rules (chat_id, trigger_type, trigger_value, action, duration, raw_text, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             params,
         )
         rid = int(cur.lastrowid)
@@ -246,11 +307,19 @@ class Storage:
 
     # ---------------------------------------------------------- warnings
 
-    async def add_warning(self, chat_id: int, user_id: int) -> int:
+    async def add_warning(self, chat_id: int, user_id: int, expires_at: int | None = None) -> int:
+        now = int(time.time())
+        exp = int(expires_at) if expires_at else 0
+        # снять истёкшие предупреждения, затем добавить новое
         await self._execute(
-            "INSERT INTO warnings (chat_id, user_id, count) VALUES (?, ?, 1) "
-            "ON CONFLICT(chat_id, user_id) DO UPDATE SET count = warnings.count + 1",
-            int(chat_id), int(user_id),
+            "DELETE FROM warnings WHERE chat_id = ? AND user_id = ? AND expires_at > 0 AND expires_at <= ?",
+            int(chat_id), int(user_id), now,
+        )
+        await self._execute(
+            "INSERT INTO warnings (chat_id, user_id, count, expires_at) VALUES (?, ?, 1, ?) "
+            "ON CONFLICT(chat_id, user_id) DO UPDATE SET "
+            "count = warnings.count + 1, expires_at = excluded.expires_at",
+            int(chat_id), int(user_id), exp,
         )
         row = await self._fetchone(
             "SELECT count FROM warnings WHERE chat_id = ? AND user_id = ?", int(chat_id), int(user_id)
@@ -259,7 +328,8 @@ class Storage:
 
     async def get_warnings(self, chat_id: int, user_id: int) -> int:
         row = await self._fetchone(
-            "SELECT count FROM warnings WHERE chat_id = ? AND user_id = ?", int(chat_id), int(user_id)
+            "SELECT count FROM warnings WHERE chat_id = ? AND user_id = ? AND (expires_at = 0 OR expires_at > ?)",
+            int(chat_id), int(user_id), int(time.time()),
         )
         return int(row["count"]) if row else 0
 
@@ -286,6 +356,13 @@ class Storage:
             f"INSERT INTO settings (chat_id, {key}) VALUES (?, ?) "
             f"ON CONFLICT(chat_id) DO UPDATE SET {key} = excluded.{key}",
             int(chat_id), int(value),
+        )
+
+    async def set_greeting(self, chat_id: int, text: str) -> None:
+        await self._execute(
+            "INSERT INTO settings (chat_id, greeting_text) VALUES (?, ?) "
+            "ON CONFLICT(chat_id) DO UPDATE SET greeting_text = excluded.greeting_text",
+            int(chat_id), str(text)[:1000],
         )
 
     async def close(self) -> None:
