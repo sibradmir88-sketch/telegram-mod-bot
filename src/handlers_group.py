@@ -236,10 +236,10 @@ def _punish_title(action: str, result: str) -> str:
 
 
 _MOD_ACTIONS = {
-    "bban": "ban", "ban": "ban",
-    "mmute": "mute", "mute": "mute",
-    "kkick": "kick", "kick": "kick",
-    "wwarn": "warn", "warn": "warn",
+    "bban": "ban",
+    "mmute": "mute",
+    "kkick": "kick",
+    "wwarn": "warn",
 }
 
 
@@ -306,7 +306,7 @@ async def group_mod_command(message: Message, bot, storage: Storage):
     )
 
 
-@router.message(Command("unmute", "unrestrict", "unmmute"), F.chat.type.in_(GROUP_TYPES))
+@router.message(Command("unmmute"), F.chat.type.in_(GROUP_TYPES))
 async def group_unmute(message: Message, bot):
     if not _is_admin(message.from_user):
         return
@@ -318,7 +318,7 @@ async def group_unmute(message: Message, bot):
     await message.answer("Мут снят")
 
 
-@router.message(Command("unban", "unbban", "unkkick"), F.chat.type.in_(GROUP_TYPES))
+@router.message(Command("unbban", "unkkick"), F.chat.type.in_(GROUP_TYPES))
 async def group_unban(message: Message, bot):
     if not _is_admin(message.from_user):
         return
@@ -330,7 +330,7 @@ async def group_unban(message: Message, bot):
     await message.answer("Бан снят")
 
 
-@router.message(Command("unwarn", "unwwarn"), F.chat.type.in_(GROUP_TYPES))
+@router.message(Command("unwwarn"), F.chat.type.in_(GROUP_TYPES))
 async def group_unwarn(message: Message, storage: Storage):
     if not _is_admin(message.from_user):
         return

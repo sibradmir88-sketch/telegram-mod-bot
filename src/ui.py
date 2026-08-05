@@ -101,7 +101,7 @@ HELP_TEXT = (
      "<b>Приветствия новичкам:</b> включаются в «Настройки» чата — "
      "можно поменять текст или вернуть стандартный.\n\n"
      "Прочие команды:\n"
-     "<code>/unmute</code> <code>/unban</code> <code>/rules</code>\n"
+     "<code>/unmmute</code> <code>/unbban</code> <code>/rules</code>\n"
      "<code>/addrule</code> <code>/delrule</code>"
 )
 
