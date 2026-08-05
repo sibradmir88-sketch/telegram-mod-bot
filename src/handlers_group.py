@@ -177,7 +177,8 @@ async def on_chat_member(event: ChatMemberUpdated, bot, storage: Storage):
     template = settings.get("greeting_text") or DEFAULT_GREETING
     name = user.full_name or user.first_name or str(user.id)
     username = f"@{user.username}" if user.username else ""
-    text = esc(render_greeting(template, name, username, chat.title or ""))
+    text = render_greeting(template, name, username, chat.title or "",
+                           user_id=user.id, chat=chat)
     try:
         await bot.send_message(chat.id, text, parse_mode=ParseMode.HTML)
         log.info("greeting sent to %s in %s", user.full_name, chat.id)

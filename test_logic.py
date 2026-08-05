@@ -271,6 +271,33 @@ async def test_warn_expiry():
     print("[OK] warn_expiry")
 
 
+def test_greeting_links():
+    from src.ui import chat_open_link, render_greeting
+
+    class FakeChat:
+        def __init__(self, id, username=None):
+            self.id = id
+            self.username = username
+
+    # супергруппа без username -> t.me/c/<id>
+    assert chat_open_link(FakeChat(-1004302428378)) == "https://t.me/c/4302428378"
+    # с username -> t.me/<username>
+    assert chat_open_link(FakeChat(-1004302428378, "my_chat")) == "https://t.me/my_chat"
+    # обычная группа -> None
+    assert chat_open_link(FakeChat(-543321)) is None
+
+    out = render_greeting("Привет, {name}! Чат: {chat} {username}",
+                          "Иван <b>", "@ivan", "Тест «чат»",
+                          user_id=777, chat=FakeChat(-1004302428378))
+    assert f'<a href="tg://user?id=777">Иван &lt;b&gt;</a>' in out, out
+    assert f'<a href="https://t.me/c/4302428378">Тест «чат»</a>' in out, out
+    assert f'<a href="tg://user?id=777">@ivan</a>' in out, out
+    # без username — пусто, без ссылки на чат — просто название
+    out2 = render_greeting("{name} {username} {chat}", "Вася", "", "Чат", chat=FakeChat(-543321))
+    assert out2 == "Вася  Чат", out2
+    print("[OK] greeting_links")
+
+
 if __name__ == "__main__":
     test_durations()
     test_parse_rule()
@@ -279,6 +306,7 @@ if __name__ == "__main__":
     test_matching()
     test_ai_verdict()
     test_split_duration_reason()
+    test_greeting_links()
     asyncio.run(test_storage())
     asyncio.run(test_warn_expiry())
     print("\nALL TESTS PASSED ✅")

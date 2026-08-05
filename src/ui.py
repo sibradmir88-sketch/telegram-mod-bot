@@ -18,12 +18,41 @@ DEFAULT_GREETING = (
 )
 
 
-def render_greeting(template: str, name: str, username: str, chat_title: str) -> str:
-    """Подставляет имя, ник и название чата в шаблон приветствия."""
+def chat_open_link(chat) -> str | None:
+    """Ссылка на чат. Для супергрупп без username работает t.me/c/<id>."""
+    if getattr(chat, "username", None):
+        return f"https://t.me/{chat.username}"
+    cid = getattr(chat, "id", None)
+    if isinstance(cid, int) and cid < -1000000000000:
+        return f"https://t.me/c/{abs(cid) - 1000000000000}"
+    return None
+
+
+def render_greeting(template: str, name: str, username: str, chat_title: str,
+                    *, user_id: int | None = None, chat=None) -> str:
+    """Подставляет имя, ник и название чата в шаблон приветствия.
+
+    {name} и {username} становятся ссылками на аккаунт (tg://user?id=),
+    {chat} — ссылкой на чат (t.me/<username> или t.me/c/<id>).
+    Все пользовательские значения экранируются, шаблон считается доверенным.
+    """
+    name_part = esc(name) if name else ""
+    if user_id:
+        name_part = f'<a href="tg://user?id={int(user_id)}">{name_part}</a>'
+
+    user_part = esc(username) if username else ""
+    if user_id and username:
+        user_part = f'<a href="tg://user?id={int(user_id)}">{user_part}</a>'
+
+    title_part = esc(chat_title) if chat_title else "наш чат"
+    link = chat_open_link(chat) if chat is not None else None
+    if link and chat_title:
+        title_part = f'<a href="{link}">{title_part}</a>'
+
     return (
-        template.replace("{name}", name)
-        .replace("{username}", username)
-        .replace("{chat}", chat_title or "наш чат")
+        template.replace("{name}", name_part)
+        .replace("{username}", user_part)
+        .replace("{chat}", title_part)
     )
 
 
