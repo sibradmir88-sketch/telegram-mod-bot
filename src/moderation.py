@@ -34,7 +34,10 @@ async def apply_punishment(bot, storage, chat_id: int, user_id: int,
     автоматически снимется (None — пока не соберётся лимит).
     """
     if action == "mute":
-        until = int(time.time()) + duration if duration else None
+        # Мут никогда не навсегда: минимум 1 час, максимум 24 часа.
+        if not duration or duration > 24 * 3600:
+            duration = min(duration or 3600, 24 * 3600)
+        until = int(time.time()) + duration
         await bot.restrict_chat_member(
             chat_id, user_id,
             permissions=ChatPermissions(can_send_messages=False),
@@ -43,6 +46,9 @@ async def apply_punishment(bot, storage, chat_id: int, user_id: int,
         return f"Мут на {format_duration(duration)}"
 
     if action == "ban":
+        # Бан: максимум 14 дней, либо навсегда (duration=None).
+        if duration and duration > 14 * 24 * 3600:
+            duration = 14 * 24 * 3600
         until = int(time.time()) + duration if duration else None
         await bot.ban_chat_member(chat_id, user_id, until_date=until)
         return f"Бан на {format_duration(duration)}"

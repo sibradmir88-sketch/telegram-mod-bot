@@ -479,6 +479,8 @@ async def handle_violation(bot, storage: Storage, message: Message, rule: dict, 
         )
         return
 
+    log.info("Наказание применено: %s для %s в %s (%s), удаление=%s",
+             result, user.id, chat_id, label, settings.get("delete_on_violation"))
     if settings.get("delete_on_violation"):
         await _delete_messages_batch(
             bot, chat_id, _take_messages(chat_id, user.id) + [message.message_id]
@@ -549,8 +551,13 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
     await storage.upsert_chat(chat_id, message.chat.title or "", message.chat.username or "")
 
     user = message.from_user
+    text_preview = (message.text or message.caption or "")[:80].replace("\n", " ")
     if _is_admin(user):
+        log.info("Сообщение от админа %s (%s) в чате %s — пропущено (защита владельца): «%s»",
+                 user.id, user.full_name, chat_id, text_preview)
         return  # владельца бота не наказываем и не отслеживаем
+    log.info("Сообщение в чате %s от %s (%s): «%s»",
+             chat_id, user.id, user.full_name, text_preview or "(без текста)")
     _record_message(chat_id, user.id, message.message_id)
 
     settings = await storage.get_settings(chat_id)
@@ -689,14 +696,36 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
         )
         return
 
+    # --- локальные нарушения наказываем СРАЗУ, без ИИ: флуд/спам/правила ---
+    # ИИ не должен отменять жёсткие локальные детекторы (например флуд из 7 сообщений).
+    if spam_hit:
+        log.info("Спам от %s в %s — наказываю", user.id, chat_id)
+        await handle_violation(bot, storage, message, by_type["spam"], settings)
+        return
+    if flood_hit:
+        log.info("Флуд от %s в %s — наказываю", user.id, chat_id)
+        await handle_violation(bot, storage, message, by_type["flood"], settings)
+        return
+    if matched:
+        strictest = max(matched, key=lambda r: SEVERITY.get(r.get("action"), 0))
+        log.info("Локальные правила от %s в %s: %s — наказываю", user.id, chat_id,
+                 ", ".join(Rule.from_dict(r).label for r in matched))
+        await handle_violation(bot, storage, message, strictest, settings)
+        return
+
     # --- умная нейро-модерация: ИИ складывает ВСЕ нарушения в одно наказание ---
     # короткие междометия («f», «k», «да», «хз») без явного нарушения не наказываем
     letter_count = sum(1 for c in text if c.isalpha())
-    if not matched and not spam_hit and not flood_hit and not handles and letter_count <= 2:
+    if not handles and letter_count <= 2:
         return
     ai_on = int(settings.get("ai_mode", 0)) == 1
     if ai_on and aimod.is_configured():
         verdict = await _ai_verdict(chat_id, user.id, rules, text, settings, extra)
+        if verdict is None:
+            log.info("ИИ: кулдаун/сбой для %s в %s", user.id, chat_id)
+        else:
+            log.info("ИИ-вердикт для %s в %s: violated=%s action=%s reason=%s",
+                     user.id, chat_id, verdict.get("violated"), verdict.get("action"), verdict.get("reason"))
         if verdict is not None:
             if not verdict["violated"]:
                 return
@@ -728,18 +757,6 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
             )
             return
 
-    # --- запасной путь без ИИ: повтор, флуд, самое строгое из совпадений ---
-    if spam_hit:
-        await handle_violation(bot, storage, message, by_type["spam"], settings)
-        return
-    if flood_hit:
-        await handle_violation(bot, storage, message, by_type["flood"], settings)
-        return
-    if matched:
-        strictest = max(matched, key=lambda r: SEVERITY.get(r.get("action"), 0))
-        await handle_violation(bot, storage, message, strictest, settings)
-        return
-
     # правила-ai: проверить по одному, если умный режим выключен
     for r in rules:
         if r["trigger_type"] != "ai":
@@ -749,3 +766,5 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
         if await aimod.moderate(r.get("trigger_value") or "правила чата", text):
             await handle_violation(bot, storage, message, r, settings)
             return
+
+    log.info("Сообщение %s в %s не нарушает правила — пропущено", user.id, chat_id)
