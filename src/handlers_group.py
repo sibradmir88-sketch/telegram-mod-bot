@@ -80,42 +80,6 @@ async def _ai_verdict(chat_id: int, user_id: int, rules: list[dict], text: str,
     return verdict
 
 
-# Обращение во втором лице: «ты/тебя/твой/вы/ваш...» — значит ругаются на человека.
-_ADDRESSEE_RE = re.compile(
-    r"(?<![а-яёa-z])(ты|тебя|тебе|тобой|тобою|твой|твоя|твоё|твое|твои|твоих|"
-    r"твоим|твоими|твоей|твоему|вы|вас|вам|ваш|ваша|ваше|ваши|ваших|вашим)(?![а-яёa-z])",
-    re.I,
-)
-
-
-async def _targets_real_user(bot, message: Message, chat_id: int, text: str) -> bool:
-    """Оскорбление направлено на реального человека, а не «в никуда».
-
-    Считаем адресата реальным, если:
-    - сообщение — ответ на сообщение человека (не бота);
-    - в тексте есть @username реального пользователя (не бота);
-    - есть обращение «ты/тебя/твой/вы/ваш...».
-    """
-    rtm = getattr(message, "reply_to_message", None)
-    if rtm is not None and getattr(rtm, "from_user", None) is not None:
-        au = rtm.from_user
-        if not au.is_bot and au.id != bot.id:
-            return True
-    for u in extract_mentions(text):
-        if u.lower() == (getattr(bot, "username", "") or "").lower():
-            continue
-        try:
-            member = await bot.get_chat_member(chat_id, u)
-        except Exception:
-            continue
-        mu = getattr(member, "user", None)
-        if mu is not None and not mu.is_bot:
-            return True
-    if _ADDRESSEE_RE.search(text):
-        return True
-    return False
-
-
 async def _channel_members(bot, handle: str) -> int | None:
     """Число подписчиков публичного канала/чата @handle. None — проверить нельзя."""
     if is_invite_link(handle):
@@ -834,12 +798,10 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
     for r in rules:
         if r["trigger_type"] in ("spam", "flood", "ai"):
             continue
-        # оскорбления/мат наказываем только когда они адресованы реальному человеку:
-        # «@9 ебучий» — не адресат, «ты ебучий» / «@вася ебучий» — адресат
-        if r["trigger_type"] in ("insult", "mat") \
-                and not await _targets_real_user(bot, message, chat_id, text):
-            log.info("Оскорбление без адресата от %s в %s — пропущено: «%s»",
-                     user.id, chat_id, text_preview)
+        # мат и оскорбления решает ТОЛЬКО ИИ (по смыслу): обычный мат не наказываем,
+        # «кашу» из букв в добром сообщении не наказываем, оскорбление — наказываем.
+        # Локальные детекторы мата слишком грубые — ловят «блядь» даже в добром сообщении.
+        if r["trigger_type"] in ("insult", "mat"):
             continue
         if rule_matches_text_dict(r, text):
             matched.append(r)
@@ -935,13 +897,6 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
                     label = verdict.get("reason") or "несколько нарушений"
             else:
                 label = verdict.get("reason") or "несколько нарушений"
-            # ИИ нашёл оскорбление/мат, но адресата-человека нет — не наказываем
-            check = f"{label} {verdict.get('reason') or ''}".lower()
-            if re.search(r"оскорб|травл|нецензур|ругатель|(?<![а-яё])мат(?![а-яё])", check) \
-                    and not await _targets_real_user(bot, message, chat_id, text):
-                log.info("ИИ: оскорбление без адресата от %s в %s — пропущено: «%s»",
-                         user.id, chat_id, text_preview)
-                return
             action = verdict.get("action")
             dm = verdict.get("duration_minutes")
             duration = dm * 60 if dm is not None else None
