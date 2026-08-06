@@ -89,7 +89,7 @@ HELP_TEXT = (
     "<b>В чате работают команды (ответь на сообщение нарушителя или укажи @username/id):</b>\n"
     "<code>/bban время причина</code> — бан\n"
     "<code>/mmute время причина</code> — мут\n"
-    "<code>/kkick причина</code> — кик\n"
+     "<code>/kkick причина</code> — кик (не бан — может вернуться)\n"
     "<code>/wwarn время причина</code> — предупреждение\n\n"
      "<b>Снять наказание (ответом или @username/id):</b>\n"
      "<code>/unbban</code> <code>/unmmute</code> <code>/unkkick</code> <code>/unwwarn</code>\n\n"

@@ -383,7 +383,7 @@ async def group_mod_command(message: Message, bot, storage: Storage):
             "Ответь на сообщение нарушителя или укажи @username (id) и наказание:\n\n"
             "<code>/bban @user причина</code> — бан\n"
             "<code>/mmute @user время причина</code> — мут\n"
-            "<code>/kkick @user причина</code> — кик\n"
+            "<code>/kkick @user причина</code> — кик (не бан — может вернуться)\n"
             "<code>/wwarn @user причина</code> — предупреждение\n\n"
             "Снять наказание (ответом или @username):\n"
             "<code>/unbban</code> <code>/unmmute</code> <code>/unkkick</code> <code>/unwwarn</code>",
@@ -475,7 +475,7 @@ async def group_unmute(message: Message, bot, storage: Storage):
     await message.answer("Пользователь размучен.")
 
 
-@router.message(Command("unbban", "unkkick"), F.chat.type.in_(GROUP_TYPES))
+@router.message(Command("unbban"), F.chat.type.in_(GROUP_TYPES))
 async def group_unban(message: Message, bot, storage: Storage):
     if not _is_admin(message.from_user):
         return
@@ -513,6 +513,46 @@ async def group_unban(message: Message, bot, storage: Storage):
         return
     log.info("/unbban выполнен для %s в %s: %s", target, message.chat.id, ", ".join(ok))
     await message.answer("Пользователь разбанен.")
+
+
+@router.message(Command("unkkick"), F.chat.type.in_(GROUP_TYPES))
+async def group_unkick(message: Message, bot, storage: Storage):
+    if not _is_admin(message.from_user):
+        return
+    target, name, _ = await _resolve_target(bot, message)
+    if not target:
+        await message.answer(
+            "Кого анкикнуть? Ответь на сообщение пользователя или укажи: /unkkick @username (или id)"
+        )
+        return
+    log.info("Команда /unkkick от админа %s в чате %s: цель=%s (%s)",
+             message.from_user.id, message.chat.id, target, name or "?")
+    ok = []
+    try:
+        status = (await bot.get_chat_member(message.chat.id, target)).status
+    except Exception:
+        status = None
+    try:
+        if status == ChatMemberStatus.KICKED:
+            # кикнут/забанен — снимаем, чтобы мог вернуться
+            await bot.unban_chat_member(message.chat.id, target, only_if_banned=True)
+            ok.append("кик снят")
+        else:
+            # не кикнут — просто снимаем ограничения всеми правами
+            await bot.restrict_chat_member(message.chat.id, target, permissions=_FULL_PERMS)
+            ok.append("мут снят")
+    except Exception:
+        pass
+    if not ok:
+        await notify_admins(
+            bot,
+            f"Не смог анкикнуть {name or target} (id {target}) в чате {message.chat.id}.\n"
+            "Проверь, что бот админ и может ограничивать участников.",
+        )
+        await message.answer("Не смог анкикнуть — проверь права бота (нужен админ с правом ограничения участников).")
+        return
+    log.info("/unkkick выполнен для %s в %s: %s", target, message.chat.id, ", ".join(ok))
+    await message.answer("Пользователь анкикнут.")
 
 
 @router.message(Command("unwwarn"), F.chat.type.in_(GROUP_TYPES))
