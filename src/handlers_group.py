@@ -32,6 +32,26 @@ GROUP_TYPES = {ChatType.GROUP, ChatType.SUPERGROUP}
 _ai_last: dict[tuple[int, int], float] = {}
 _ai_violated: set[tuple[int, int]] = set()
 
+# Размут: ВСЕ права True. Пустой ChatPermissions() = все False = снова мут!
+_FULL_PERMS = ChatPermissions(
+    can_send_messages=True,
+    can_send_audios=True,
+    can_send_documents=True,
+    can_send_photos=True,
+    can_send_videos=True,
+    can_send_video_notes=True,
+    can_send_voice_notes=True,
+    can_send_polls=True,
+    can_send_other_messages=True,
+    can_add_web_page_previews=True,
+    can_react_to_messages=True,
+    can_edit_tag=True,
+    can_change_info=True,
+    can_invite_users=True,
+    can_pin_messages=True,
+    can_manage_topics=True,
+)
+
 
 def _build_rules_context(rules: list[dict]) -> str:
     """Список правил для нейросети: номер + описание + наказание (с вариантами)."""
@@ -429,13 +449,18 @@ async def group_unmute(message: Message, bot, storage: Storage):
              message.from_user.id, message.chat.id, target, name or "?")
     ok = []
     try:
-        await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
-        ok.append("мут снят")
+        status = (await bot.get_chat_member(message.chat.id, target)).status
     except Exception:
-        pass
+        status = None
     try:
-        await bot.unban_chat_member(message.chat.id, target)
-        ok.append("бан снят")
+        if status == ChatMemberStatus.KICKED:
+            # реально забанен — снимаем бан (unban на НЕзабаненном = кик!)
+            await bot.unban_chat_member(message.chat.id, target, only_if_banned=True)
+            ok.append("бан снят")
+        else:
+            # размут: все права True (пустой ChatPermissions() = мут!)
+            await bot.restrict_chat_member(message.chat.id, target, permissions=_FULL_PERMS)
+            ok.append("мут снят")
     except Exception:
         pass
     if not ok:
@@ -464,13 +489,18 @@ async def group_unban(message: Message, bot, storage: Storage):
              message.from_user.id, message.chat.id, target, name or "?")
     ok = []
     try:
-        await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
-        ok.append("мут снят")
+        status = (await bot.get_chat_member(message.chat.id, target)).status
     except Exception:
-        pass
+        status = None
     try:
-        await bot.unban_chat_member(message.chat.id, target)
-        ok.append("бан снят")
+        if status == ChatMemberStatus.KICKED:
+            # реально забанен — снимаем бан (unban на НЕзабаненном = кик!)
+            await bot.unban_chat_member(message.chat.id, target, only_if_banned=True)
+            ok.append("бан снят")
+        else:
+            # не в бане — просто снимаем ограничения всеми правами
+            await bot.restrict_chat_member(message.chat.id, target, permissions=_FULL_PERMS)
+            ok.append("мут снят")
     except Exception:
         pass
     if not ok:
