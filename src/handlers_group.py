@@ -344,6 +344,8 @@ async def group_mod_command(message: Message, bot, storage: Storage):
         duration = 3600  # мут без срока = 1 час
 
     settings = await storage.get_settings(message.chat.id)
+    log.info("Команда /%s от админа %s в чате %s: цель=%s (%s), duration=%s",
+             cmd, message.from_user.id, message.chat.id, target, user_name or "?", duration)
 
     try:
         result = await apply_punishment(
@@ -389,6 +391,8 @@ async def group_unmute(message: Message, bot, storage: Storage):
             "Кого размутить? Ответь на сообщение пользователя или укажи: /unmmute @username (или id)"
         )
         return
+    log.info("Команда /unmmute от админа %s в чате %s: цель=%s (%s)",
+             message.from_user.id, message.chat.id, target, name or "?")
     ok = []
     try:
         await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
@@ -408,6 +412,7 @@ async def group_unmute(message: Message, bot, storage: Storage):
         )
         await message.answer("Не смог размутить — проверь права бота (нужен админ с правом ограничения участников).")
         return
+    log.info("/unmmute выполнен для %s в %s: %s", target, message.chat.id, ", ".join(ok))
     await message.answer("Пользователь размучен.")
 
 
@@ -421,6 +426,8 @@ async def group_unban(message: Message, bot, storage: Storage):
             "Кого разбанить? Ответь на сообщение пользователя или укажи: /unbban @username (или id)"
         )
         return
+    log.info("Команда /unbban от админа %s в чате %s: цель=%s (%s)",
+             message.from_user.id, message.chat.id, target, name or "?")
     ok = []
     try:
         await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
@@ -440,6 +447,7 @@ async def group_unban(message: Message, bot, storage: Storage):
         )
         await message.answer("Не смог разбанить — проверь права бота (нужен админ с правом ограничения участников).")
         return
+    log.info("/unbban выполнен для %s в %s: %s", target, message.chat.id, ", ".join(ok))
     await message.answer("Пользователь разбанен.")
 
 

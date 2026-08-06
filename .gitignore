@@ -5,3 +5,5 @@ moderator.db
 .venv/
 venv/
 venv-win/
+.bot.lock
+bot_out.log
