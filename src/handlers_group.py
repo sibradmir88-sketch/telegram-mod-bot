@@ -191,15 +191,13 @@ async def on_chat_member(event: ChatMemberUpdated, bot, storage: Storage):
         return
     new = event.new_chat_member
     old = event.old_chat_member
-    if new.status not in (
-        ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.RESTRICTED
-    ):
+    # Приветствуем ТОЛЬКО реальное вступление: пользователь был вне чата
+    # (left/kicked) и стал обычным участником. Изменение статуса из-за
+    # мута/бана/размута/разбана приветствием НЕ является.
+    if new.status != ChatMemberStatus.MEMBER:
         return
-    if old.status in (
-        ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR,
-        ChatMemberStatus.RESTRICTED, ChatMemberStatus.CREATOR,
-    ):
-        return  # не вступление, а например повышение прав
+    if old.status not in (ChatMemberStatus.LEFT, ChatMemberStatus.KICKED):
+        return
     user = new.user
     if user is None or user.is_bot:
         return
