@@ -238,6 +238,44 @@ async def _reply_target(message: Message) -> int | None:
     return None
 
 
+async def _named_target(bot, arg: str) -> tuple[int | None, str]:
+    """@username или числовой id → (user_id, имя)."""
+    arg = arg.strip()
+    if arg.isdigit():
+        return int(arg), arg
+    if arg.startswith("@"):
+        try:
+            chat = await bot.get_chat(arg)
+            first = getattr(chat, "first_name", "") or ""
+            last = getattr(chat, "last_name", "") or ""
+            name = f"{first} {last}".strip() or arg
+            return chat.id, name
+        except Exception:
+            return None, arg
+    return None, arg
+
+
+async def _resolve_target(bot, message: Message) -> tuple[int | None, str | None, list[str]]:
+    """Определяет цель команды: ответ на сообщение, @username или числовой id.
+
+    Возвращает (user_id, имя_для_вывода, оставшиеся_аргументы_команды).
+    """
+    parts = message.text.split()
+    rest = parts[1:] if len(parts) > 1 else []
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        u = message.reply_to_message.from_user
+        if not u.is_bot:
+            return u.id, u.full_name or str(u.id), rest
+
+    if rest and (rest[0].startswith("@") or rest[0].isdigit()):
+        tid, name = await _named_target(bot, rest[0])
+        if tid:
+            return tid, name, rest[1:]
+
+    return None, None, rest
+
+
 _DURATION_TOKEN_RE = re.compile(r"(\d+\s*[а-яёa-z]+)")
 _FOREVER_WORDS = ("навсегда", "навечно", "вечно", "бессрочно", "перманентно", "forever", "permanent")
 
@@ -285,29 +323,26 @@ _MOD_ACTIONS = {
 async def group_mod_command(message: Message, bot, storage: Storage):
     if not _is_admin(message.from_user):
         return
-    target = await _reply_target(message)
+    target, user_name, rest = await _resolve_target(bot, message)
     if not target:
         await message.answer(
-            "Ответь на сообщение нарушителя и укажи наказание:\n\n"
-            "<code>/bban время причина</code> — бан\n"
-            "<code>/mmute время причина</code> — мут\n"
-            "<code>/kkick причина</code> — кик\n"
-            "<code>/wwarn время причина</code> — предупреждение\n\n"
-            "Снять наказание (ответом):\n"
+            "Ответь на сообщение нарушителя или укажи @username (id) и наказание:\n\n"
+            "<code>/bban @user причина</code> — бан\n"
+            "<code>/mmute @user время причина</code> — мут\n"
+            "<code>/kkick @user причина</code> — кик\n"
+            "<code>/wwarn @user причина</code> — предупреждение\n\n"
+            "Снять наказание (ответом или @username):\n"
             "<code>/unbban</code> <code>/unmmute</code> <code>/unkkick</code> <code>/unwwarn</code>",
             parse_mode=ParseMode.HTML,
         )
         return
 
-    parts = message.text.split()
-    cmd = parts[0].lstrip("/").lower()
+    cmd = message.text.split()[0].lstrip("/").lower()
     action = _MOD_ACTIONS[cmd]
-    duration, reason = _split_duration_reason(" ".join(parts[1:]))
+    duration, reason = _split_duration_reason(" ".join(rest))
     if action == "mute" and duration is None:
         duration = 3600  # мут без срока = 1 час
 
-    target_user = message.reply_to_message.from_user
-    user_name = target_user.full_name or str(target_user.id)
     settings = await storage.get_settings(message.chat.id)
 
     try:
@@ -318,7 +353,7 @@ async def group_mod_command(message: Message, bot, storage: Storage):
     except Exception as exc:
         await notify_admins(
             bot,
-            f"Не смог наказать «{esc(user_name)}» (id {target}) в чате {message.chat.id}.\n"
+            f"Не смог наказать «{esc(user_name or str(target))}» (id {target}) в чате {message.chat.id}.\n"
             f"Команда: {cmd}. Ошибка: {esc(str(exc))}\n\n"
             "Проверь, что бот админ в этом чате.",
         )
@@ -327,7 +362,7 @@ async def group_mod_command(message: Message, bot, storage: Storage):
     lines = [
         f"<b>{_punish_title(action, result)}</b>",
         "",
-        f"<b>Пользователь:</b> <a href=\"tg://user?id={target}\">{esc(user_name)}</a>",
+        f"<b>Пользователь:</b> <a href=\"tg://user?id={target}\">{esc(user_name or str(target))}</a>",
         f"<b>Наказание:</b> {result}",
     ]
     if reason:
@@ -338,43 +373,85 @@ async def group_mod_command(message: Message, bot, storage: Storage):
         bot,
         f"<b>{_punish_title(action, result)}</b>\n"
         f"Чат: {esc(message.chat.title or message.chat.id)}\n"
-        f"Пользователь: <a href=\"tg://user?id={target}\">{esc(user_name)}</a>\n"
+        f"Пользователь: <a href=\"tg://user?id={target}\">{esc(user_name or str(target))}</a>\n"
         f"Наказание: {result}"
         + (f"\nПричина: {esc(reason)}" if reason else ""),
     )
 
 
 @router.message(Command("unmmute"), F.chat.type.in_(GROUP_TYPES))
-async def group_unmute(message: Message, bot):
+async def group_unmute(message: Message, bot, storage: Storage):
     if not _is_admin(message.from_user):
         return
-    target = await _reply_target(message)
+    target, name, _ = await _resolve_target(bot, message)
     if not target:
-        await message.answer("Ответь на сообщение пользователя: /unmmute")
+        await message.answer(
+            "Кого размутить? Ответь на сообщение пользователя или укажи: /unmmute @username (или id)"
+        )
         return
-    await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
+    ok = []
+    try:
+        await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
+        ok.append("мут снят")
+    except Exception:
+        pass
+    try:
+        await bot.unban_chat_member(message.chat.id, target)
+        ok.append("бан снят")
+    except Exception:
+        pass
+    if not ok:
+        await notify_admins(
+            bot,
+            f"Не смог размутить {name or target} (id {target}) в чате {message.chat.id}.\n"
+            "Проверь, что бот админ и может ограничивать участников.",
+        )
+        await message.answer("Не смог размутить — проверь права бота (нужен админ с правом ограничения участников).")
+        return
     await message.answer("Пользователь размучен.")
 
 
 @router.message(Command("unbban", "unkkick"), F.chat.type.in_(GROUP_TYPES))
-async def group_unban(message: Message, bot):
+async def group_unban(message: Message, bot, storage: Storage):
     if not _is_admin(message.from_user):
         return
-    target = await _reply_target(message)
+    target, name, _ = await _resolve_target(bot, message)
     if not target:
-        await message.answer("Ответь на сообщение пользователя: /unbban")
+        await message.answer(
+            "Кого разбанить? Ответь на сообщение пользователя или укажи: /unbban @username (или id)"
+        )
         return
-    await bot.unban_chat_member(message.chat.id, target)
+    ok = []
+    try:
+        await bot.restrict_chat_member(message.chat.id, target, permissions=ChatPermissions())
+        ok.append("мут снят")
+    except Exception:
+        pass
+    try:
+        await bot.unban_chat_member(message.chat.id, target)
+        ok.append("бан снят")
+    except Exception:
+        pass
+    if not ok:
+        await notify_admins(
+            bot,
+            f"Не смог разбанить {name or target} (id {target}) в чате {message.chat.id}.\n"
+            "Проверь, что бот админ и может ограничивать участников.",
+        )
+        await message.answer("Не смог разбанить — проверь права бота (нужен админ с правом ограничения участников).")
+        return
     await message.answer("Пользователь разбанен.")
 
 
 @router.message(Command("unwwarn"), F.chat.type.in_(GROUP_TYPES))
-async def group_unwarn(message: Message, storage: Storage):
+async def group_unwarn(message: Message, bot, storage: Storage):
     if not _is_admin(message.from_user):
         return
-    target = await _reply_target(message)
+    target, name, _ = await _resolve_target(bot, message)
     if not target:
-        await message.answer("Ответь на сообщение пользователя: /unwwarn")
+        await message.answer(
+            "У кого сбросить предупреждения? Ответь на сообщение пользователя или укажи: /unwwarn @username (или id)"
+        )
         return
     await storage.reset_warnings(message.chat.id, target)
     await message.answer("Предупреждения пользователя сброшены.")
