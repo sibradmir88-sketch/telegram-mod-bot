@@ -951,6 +951,21 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
                             delete_ids=pack_ids,
                         )
                         return
+
+            # внешний ИИ недоступен (сбой/лимит/кулдаун) — fallback на нашу нейросеть
+            if toxicity.is_available():
+                local = toxicity.analyze(text)
+                if local is not None:
+                    label = local.get("reason") or "оскорбление"
+                    log.info("Наша модель (fallback): нарушение %s от %s в %s",
+                             label, user.id, chat_id)
+                    await handle_violation(
+                        bot, storage, message,
+                        {"trigger_type": "ai", "trigger_value": label,
+                         "action": local.get("action") or "mute", "duration": 3600},
+                        settings, reason=label, rule_label=label,
+                    )
+                    return
         else:
             log.info("ИИ-вердикт для %s в %s: violated=%s action=%s reason=%s",
                      user.id, chat_id, verdict.get("violated"), verdict.get("action"), verdict.get("reason"))
