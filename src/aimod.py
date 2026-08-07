@@ -110,7 +110,7 @@ async def _giga_token(session: aiohttp.ClientSession, force: bool = False) -> st
     return _giga_token_cache
 
 
-async def _chat(prompt: str, max_tokens: int = 250) -> str | None:
+async def _chat(prompt: str, max_tokens: int = 250, json_mode: bool = False) -> str | None:
     """Один запрос к чат-API. Возвращает текст ответа или None при ошибке."""
     payload = {
         "model": AI_MODEL,
@@ -118,6 +118,10 @@ async def _chat(prompt: str, max_tokens: int = 250) -> str | None:
         "temperature": 0,
         "max_tokens": max_tokens,
     }
+    # OpenRouter поддерживает json_object — модель не рассуждает вслух, а
+    # возвращает чистый JSON (без этого reasoning-модели не укладываются в токены).
+    if json_mode and "openrouter.ai" in AI_API_URL:
+        payload["response_format"] = {"type": "json_object"}
     headers = {"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"}
     giga = _is_giga()
     connector = _make_connector()
@@ -300,5 +304,5 @@ async def analyze_message(rules_context: str, text: str, extra: str = "") -> dic
         '"reason": "<кратко почему>"}\n'
         'Если сообщение в порядке: {"violated": false}'
     )
-    answer = await _chat(prompt, max_tokens=200)
+    answer = await _chat(prompt, max_tokens=400, json_mode=True)
     return parse_verdict(answer or "")

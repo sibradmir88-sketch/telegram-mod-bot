@@ -128,19 +128,41 @@ _MAX_TRACKED_MSGS = 200
 _TRACK_WINDOW = 900  # сколько секунд храним сообщения для зачистки
 
 
-def _record_message(chat_id: int, user_id: int, msg_id: int) -> None:
+def _record_message(chat_id: int, user_id: int, msg_id: int, text: str = "") -> None:
     key = (chat_id, user_id)
     dq = _recent_msgs.setdefault(key, deque(maxlen=_MAX_TRACKED_MSGS))
-    dq.append((msg_id, time.time()))
+    dq.append((msg_id, time.time(), text[:300]))
 
 
-def _take_messages(chat_id: int, user_id: int) -> list[int]:
-    """Забирает (и очищает) недавние id сообщений пользователя в чате."""
+def _take_messages(chat_id: int, user_id: int, window: int = _TRACK_WINDOW) -> list[int]:
+    """Забирает (и очищает) недавние id сообщений пользователя в чате за окно."""
     dq = _recent_msgs.pop((chat_id, user_id), None)
     if not dq:
         return []
     now = time.time()
-    return [mid for mid, ts in dq if now - ts <= _TRACK_WINDOW]
+    return [mid for mid, ts, _txt in dq if now - ts <= window]
+
+
+def _recent_pack(chat_id: int, user_id: int, window: int = 30, max_msgs: int = 15,
+                 current: str = "", current_id: int = 0) -> tuple[str, list[int]]:
+    """Пачка недавних сообщений пользователя (лесенка оскорблений отдельными
+    сообщениями). Возвращает (объединённый текст, id сообщений вместе с текущим)."""
+    dq = _recent_msgs.get((chat_id, user_id))
+    if not dq:
+        return "", []
+    now = time.time()
+    recent = [(mid, ts, txt) for mid, ts, txt in dq if now - ts <= window]
+    if len(recent) < 2:
+        return "", []
+    texts = [t for _m, _t, t in recent][-max_msgs:]
+    ids = [m for m, _t, _txt in recent][-max_msgs:]
+    if current:
+        texts.append(current)
+        ids.append(current_id)
+    joined = "\n".join(t for t in texts if t)
+    if len(joined) > 800:
+        joined = joined[-800:]
+    return joined, ids
 
 
 async def _delete_messages_batch(bot, chat_id: int, ids: list[int]) -> None:
@@ -262,6 +284,17 @@ async def _named_target(bot, arg: str) -> tuple[int | None, str]:
     if arg.isdigit():
         return int(arg), arg
     if arg.startswith("@"):
+        uname = arg.lstrip("@")
+        # getChat умеет резолвить только каналы/супергруппы, а личные аккаунты —
+        # только searchUsersByUsername (Bot API 8.1+). Ищем пользователя первым.
+        try:
+            data = await bot.session(bot, "searchUsersByUsername", username=uname)
+            uid = (data or {}).get("id")
+            if uid:
+                return int(uid), arg
+        except Exception:
+            pass
+        # фолбэк: канал/супергруппа/чат по username
         try:
             chat = await bot.get_chat(arg)
             first = getattr(chat, "first_name", "") or ""
@@ -600,22 +633,23 @@ async def group_delrule(message: Message, storage: Storage):
 # ---------------------------------------------------------------- auto moderation
 
 async def handle_violation(bot, storage: Storage, message: Message, rule: dict, settings: dict,
-                           reason: str = "", rule_label: str | None = None):
+                           reason: str = "", rule_label: str | None = None,
+                           delete_ids: list[int] | None = None):
     chat_id = message.chat.id
     user = message.from_user
     rule_obj = Rule.from_dict(rule)
     user_name = user.full_name or str(user.id)
     label = rule_label or rule_obj.label
     reason_line = f"\n<b>Причина:</b> {esc(reason)}" if reason else ""
+    # по умолчанию удаляем только нарушенное сообщение, а не всю историю за 15 минут
+    delete_targets = delete_ids if delete_ids is not None else [message.message_id]
 
     # уже наказали этого пользователя только что — не дублируем сообщения
     now = time.time()
     key = (chat_id, user.id)
     if now - _recent_punish.get(key, 0.0) < _PUNISH_COOLDOWN:
         if settings.get("delete_on_violation"):
-            await _delete_messages_batch(
-                bot, chat_id, _take_messages(chat_id, user.id) + [message.message_id]
-            )
+            await _delete_messages_batch(bot, chat_id, delete_targets)
         return
     _recent_punish[key] = now
 
@@ -635,9 +669,7 @@ async def handle_violation(bot, storage: Storage, message: Message, rule: dict, 
     log.info("Наказание применено: %s для %s в %s (%s), удаление=%s",
              result, user.id, chat_id, label, settings.get("delete_on_violation"))
     if settings.get("delete_on_violation"):
-        await _delete_messages_batch(
-            bot, chat_id, _take_messages(chat_id, user.id) + [message.message_id]
-        )
+        await _delete_messages_batch(bot, chat_id, delete_targets)
 
     if settings.get("notify_group"):
         try:
@@ -711,7 +743,7 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
         return  # владельца бота не наказываем и не отслеживаем
     log.info("Сообщение в чате %s от %s (%s): «%s»",
              chat_id, user.id, user.full_name, text_preview or "(без текста)")
-    _record_message(chat_id, user.id, message.message_id)
+    _record_message(chat_id, user.id, message.message_id, message.text or message.caption or "")
 
     settings = await storage.get_settings(chat_id)
     rules = await storage.get_rules(chat_id)
@@ -858,11 +890,19 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
     # ИИ не должен отменять жёсткие локальные детекторы (например флуд из 7 сообщений).
     if spam_hit:
         log.info("Спам от %s в %s — наказываю", user.id, chat_id)
-        await handle_violation(bot, storage, message, by_type["spam"], settings)
+        await handle_violation(
+            bot, storage, message, by_type["spam"], settings,
+            delete_ids=_take_messages(chat_id, user.id,
+                                      int(settings.get("spam_seconds", 20))) + [message.message_id],
+        )
         return
     if flood_hit:
         log.info("Флуд от %s в %s — наказываю", user.id, chat_id)
-        await handle_violation(bot, storage, message, by_type["flood"], settings)
+        await handle_violation(
+            bot, storage, message, by_type["flood"], settings,
+            delete_ids=_take_messages(chat_id, user.id,
+                                      int(settings.get("flood_seconds", 10))) + [message.message_id],
+        )
         return
     if matched:
         strictest = max(matched, key=lambda r: SEVERITY.get(r.get("action"), 0))
@@ -881,6 +921,35 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
         verdict = await _ai_verdict(chat_id, user.id, rules, text, settings, extra)
         if verdict is None:
             log.info("ИИ: кулдаун/сбой для %s в %s", user.id, chat_id)
+            # ИИ недоступен или в кулдауне — лесенка оскорблений отдельными
+            # сообщениями проскочила бы, поэтому пробуем пачку одним запросом.
+            pack_text, pack_ids = _recent_pack(
+                chat_id, user.id, window=30, max_msgs=15,
+                current=text, current_id=message.message_id,
+            )
+            if pack_ids:
+                pack_verdict = await aimod.analyze_message(
+                    _build_rules_context(rules), pack_text, extra
+                )
+                if pack_verdict is not None:
+                    _ai_last[(chat_id, user.id)] = time.time()
+                    if pack_verdict["violated"]:
+                        label = pack_verdict.get("reason") or "несколько нарушений"
+                        action = pack_verdict.get("action") or "warn"
+                        dm = pack_verdict.get("duration_minutes")
+                        duration = dm * 60 if dm is not None else None
+                        if action == "mute" and duration is None:
+                            duration = 3600
+                        log.info("ИИ(пачка): нарушение %s от %s в %s — наказываю",
+                                 label, user.id, chat_id)
+                        await handle_violation(
+                            bot, storage, message,
+                            {"trigger_type": "ai", "trigger_value": label,
+                             "action": action, "duration": duration},
+                            settings, reason=label, rule_label=label,
+                            delete_ids=pack_ids,
+                        )
+                        return
         else:
             log.info("ИИ-вердикт для %s в %s: violated=%s action=%s reason=%s",
                      user.id, chat_id, verdict.get("violated"), verdict.get("action"), verdict.get("reason"))
