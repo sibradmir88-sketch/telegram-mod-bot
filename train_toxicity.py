@@ -14,12 +14,13 @@ import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 
+import json
 import random
+import sys
 import time
 
 import numpy as np
 import torch
-from datasets import load_dataset
 from sklearn.metrics import accuracy_score, f1_score
 from torch.utils.data import DataLoader, Dataset
 from transformers import (
@@ -31,12 +32,18 @@ from transformers import (
 MODEL_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "rubert-tiny2-base")  # скачана вручную через hf-mirror
 DATASET_NAME = "molyalya/russian-toxicity-dataset"  # копия SberDevices-датасета на зеркале
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "toxic_classifier")
+HARD_CASES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "datasets", "hard_cases.jsonl")
 MAX_LEN = 96          # сообщения в чате короткие
 BATCH_SIZE = 32
-EPOCHS = 2
 LR = 2e-5
-MAX_SAMPLES = 30000   # сбалансированная подвыборка для скорости на CPU
 SEED = 42
+
+# Если веса уже есть — дообучаемся (resume), быстрее и сохраняем качество.
+RESUME = os.path.isfile(os.path.join(OUT_DIR, "model.safetensors")) or os.path.isfile(os.path.join(OUT_DIR, "pytorch_model.bin"))
+EPOCHS = int(os.getenv("FINETUNE_EPOCHS", "1" if RESUME else "2"))
+MAX_SAMPLES = int(os.getenv("FINETUNE_SAMPLES", "8000" if RESUME else "30000"))
+# Во сколько раз дублировать «сложные случаи» в обучении, чтобы модель их запомнила
+HARD_REPEAT = int(os.getenv("FINETUNE_HARD_REPEAT", "10"))
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -98,9 +105,36 @@ def main():
     labels = [labels[i] for i in pick]
     print(f"   подвыборка: {len(texts)} (pos={sum(labels)}, neg={len(labels)-sum(labels)})", flush=True)
 
-    print("2) Загружаю модель", MODEL_NAME, "...", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=2)
+    # наши «сложные случаи» (hard_cases.jsonl) — добавляем в обучение И валидацию
+    hard = []
+    if os.path.isfile(HARD_CASES):
+        with open(HARD_CASES, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    hard.append(json.loads(line))
+        print(f"   hard_cases.jsonl: {len(hard)} (pos={sum(1 for h in hard if h['label']==1)}, "
+              f"neg={sum(1 for h in hard if h['label']==0)})", flush=True)
+    for h in hard:
+        texts.append(h["text"])
+        labels.append(int(h["label"]))
+        val_texts.append(h["text"])
+        val_labels.append(int(h["label"]))
+    # дублируем hard в обучающей выборке, чтобы они не затерялись в 8k примерах
+    for h in hard:
+        for _ in range(HARD_REPEAT - 1):
+            texts.append(h["text"])
+            labels.append(int(h["label"]))
+    print(f"   итого train: {len(texts)}, val: {len(val_texts)}", flush=True)
+
+    if RESUME:
+        print("2) Дообучаюсь с текущих весов:", OUT_DIR, flush=True)
+        tokenizer = AutoTokenizer.from_pretrained(OUT_DIR)
+        model = AutoModelForSequenceClassification.from_pretrained(OUT_DIR)
+    else:
+        print("2) Загружаю модель", MODEL_NAME, "...", flush=True)
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+        model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME, num_labels=2)
     model.train()
     print("   параметров:", sum(p.numel() for p in model.parameters()) // 1_000_000, "M", flush=True)
 
