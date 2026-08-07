@@ -66,7 +66,7 @@ def _should_use_proxy() -> bool:
     if not BOT_PROXY:
         return False
     host = urlparse(AI_API_URL).hostname or ""
-    for direct_host in ("giga.chat", "sberbank.ru", "huggingface.co", "sambanova.ai", "api.cloudflare.com"):
+    for direct_host in ("giga.chat", "sberbank.ru", "huggingface.co", "sambanova.ai", "api.cloudflare.com", "localhost", "127.0.0.1"):
         if direct_host in host:
             return False
     return True
@@ -120,8 +120,12 @@ async def _chat(prompt: str, max_tokens: int = 250, json_mode: bool = False) -> 
     }
     # OpenRouter поддерживает json_object — модель не рассуждает вслух, а
     # возвращает чистый JSON (без этого reasoning-модели не укладываются в токены).
-    if json_mode and "openrouter.ai" in AI_API_URL:
-        payload["response_format"] = {"type": "json_object"}
+    # Локальная Ollama (localhost/127.0.0.1) понимает свой "format": "json".
+    if json_mode:
+        if "openrouter.ai" in AI_API_URL:
+            payload["response_format"] = {"type": "json_object"}
+        elif "127.0.0.1" in AI_API_URL or "localhost" in AI_API_URL:
+            payload["format"] = "json"
     headers = {"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"}
     giga = _is_giga()
     connector = _make_connector()

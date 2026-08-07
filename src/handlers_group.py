@@ -11,6 +11,7 @@ from aiogram.filters import Command
 from aiogram.types import ChatMemberUpdated, ChatPermissions, Message
 
 from . import aimod
+from . import toxicity
 from .config import ADMIN_IDS, NEWS_CHANNEL_THRESHOLD
 from .detect import extract_mentions, extract_telegram_links, is_invite_link
 from .moderation import Trackers, apply_punishment, is_protected
@@ -984,14 +985,41 @@ async def on_group_message(message: Message, bot, storage: Storage, trackers: Tr
             )
             return
 
+    # --- наша собственная нейросеть (локальный классификатор токсичности) ---
+    # Если внешнего ИИ-API нет/не настроен — оскорбления ловит своя модель.
+    elif ai_on and toxicity.is_available():
+        local = toxicity.analyze(text)
+        if local is not None:
+            label = local.get("reason") or "оскорбление"
+            action = local.get("action") or "mute"
+            dm = local.get("duration_minutes")
+            duration = dm * 60 if dm is not None else None
+            if action == "mute" and duration is None:
+                duration = 3600
+            log.info("Наша модель: нарушение от %s в %s — наказываю", user.id, chat_id)
+            await handle_violation(
+                bot, storage, message,
+                {"trigger_type": "ai", "trigger_value": label,
+                 "action": action, "duration": duration},
+                settings, reason=label, rule_label=label,
+            )
+            return
+
     # правила-ai: проверить по одному, если умный режим выключен
     for r in rules:
         if r["trigger_type"] != "ai":
             continue
-        if ai_on or not aimod.is_configured():
+        if ai_on:
             continue
-        if await aimod.moderate(r.get("trigger_value") or "правила чата", text):
-            await handle_violation(bot, storage, message, r, settings)
-            return
+        if aimod.is_configured():
+            if await aimod.moderate(r.get("trigger_value") or "правила чата", text):
+                await handle_violation(bot, storage, message, r, settings)
+                return
+        elif toxicity.is_available():
+            local = toxicity.analyze(text)
+            if local is not None:
+                await handle_violation(bot, storage, message, r, settings,
+                                       reason="оскорбление")
+                return
 
     log.info("Сообщение %s в %s не нарушает правила — пропущено", user.id, chat_id)

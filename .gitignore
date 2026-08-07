@@ -7,3 +7,7 @@ venv/
 venv-win/
 .bot.lock
 bot_out.log
+
+# model weights (111MB) - stored via GitHub Release, not git
+models/toxic_classifier/*.safetensors
+models/rubert-tiny2-base/
