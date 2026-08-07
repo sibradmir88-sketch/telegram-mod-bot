@@ -106,7 +106,7 @@ async def show_rules_view(callback: CallbackQuery, chat_id: int, storage: Storag
             from . import aimod
 
             if not aimod.is_configured():
-                lines += ["", "Нейро-правила требуют AI_API_URL/AI_API_KEY в .env."]
+                lines += ["", "Нейро-правила работают на встроенной нейросети."]
     else:
         lines.append("Правил пока нет — добавь первое правило!")
     lines += ["", f"Статус: {status}", "Кнопкой с номером удаляй лишние правила."]
@@ -335,7 +335,7 @@ async def on_rule_text(message: Message, state: FSMContext, storage: Storage):
         from . import aimod
 
         if not aimod.is_configured():
-            lines += ["", "Нейро-правила требуют AI_API_URL и AI_API_KEY в .env — пока не работают."]
+            lines += ["", "Нейро-правила работают на встроенной нейросети."]
     lines += ["", "Отправь ещё или вернись в меню."]
     await message.answer("\n".join(lines), reply_markup=kb, parse_mode=ParseMode.HTML)
 

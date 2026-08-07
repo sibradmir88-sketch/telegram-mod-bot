@@ -41,8 +41,10 @@ DEFAULT_FLOOD_SECONDS = int(os.getenv("DEFAULT_FLOOD_SECONDS", "10"))
 DEFAULT_SPAM_MESSAGES = int(os.getenv("DEFAULT_SPAM_MESSAGES", "3"))
 DEFAULT_SPAM_SECONDS = int(os.getenv("DEFAULT_SPAM_SECONDS", "20"))
 
-# Опциональная нейро-модерация (OpenAI-совместимый API: GigaChat, OpenAI, Qwen и др.)
-# Если не задано — правила типа «ai» неактивны, остальные работают локально.
+# Опциональная нейро-модерация через внешний OpenAI-совместимый API.
+# По умолчанию НЕ используется: умный режим работает на встроенной нейросети
+# (src/toxicity.py + models/toxic_classifier/), без ключей и лимитов.
+# AI_* переменные оставлены на будущее, если понадобится внешний ИИ.
 AI_API_URL = os.getenv("AI_API_URL", "").strip()
 AI_API_KEY = os.getenv("AI_API_KEY", "").strip()
 AI_MODEL = os.getenv("AI_MODEL", "gpt-4o-mini").strip()

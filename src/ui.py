@@ -157,9 +157,7 @@ def settings_text(s: dict, chat: dict | None) -> str:
         from . import aimod
 
         if not aimod.is_configured():
-            ai_warn = (
-                "\nДля умного режима нужны AI_API_URL и AI_API_KEY в .env — пока он не работает."
-            )
+            ai_warn = "\nУмный режим: встроенная нейросеть (локальная модель)."
     greeting_preview = ""
     if int(s.get("greeting_enabled", 0)):
         tmpl = s.get("greeting_text") or DEFAULT_GREETING

@@ -1,8 +1,9 @@
-"""Опциональная нейро-модерация через OpenAI-совместимый API.
+"""Опциональная нейро-модерация через внешний OpenAI-совместимый API.
 
-Поддерживает любые эндпоинты chat/completions: GigaChat, OpenAI, Qwen и т.п.
+Основной режим модератора — встроенная нейросеть (src/toxicity.py), внешний
+API не нужен. Этот модуль остался для будущего: GigaChat, OpenAI, Qwen и т.п.
 Включение: задать в .env  AI_API_URL, AI_API_KEY, AI_MODEL.
-Без настройки правила типа «ai» просто не срабатывают.
+Без настройки умный режим работает на встроенной модели.
 
 Режимы:
 - moderate()        — проверка одного правила (True/False) для триггеров «ai»;
@@ -118,13 +119,10 @@ async def _chat(prompt: str, max_tokens: int = 250, json_mode: bool = False) -> 
         "temperature": 0,
         "max_tokens": max_tokens,
     }
-    # OpenRouter поддерживает json_object — модель не рассуждает вслух, а
-    # возвращает чистый JSON (без этого reasoning-модели не укладываются в токены).
-    # Локальная Ollama (localhost/127.0.0.1) понимает свой "format": "json".
+    # json_object поддерживают не все API. Локальная Ollama
+    # (localhost/127.0.0.1) понимает свой "format": "json".
     if json_mode:
-        if "openrouter.ai" in AI_API_URL:
-            payload["response_format"] = {"type": "json_object"}
-        elif "127.0.0.1" in AI_API_URL or "localhost" in AI_API_URL:
+        if "127.0.0.1" in AI_API_URL or "localhost" in AI_API_URL:
             payload["format"] = "json"
     headers = {"Authorization": f"Bearer {AI_API_KEY}", "Content-Type": "application/json"}
     giga = _is_giga()
