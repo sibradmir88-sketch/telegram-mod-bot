@@ -242,6 +242,11 @@ def test_split_duration_reason():
     assert _split_duration_reason("навсегда реклама") == (None, "реклама")
     assert _split_duration_reason("просто причина") == (None, "просто причина")
     assert _split_duration_reason("- 1 день мат") == (86400, "мат")
+    # время в конце: /mmute @user причина 2 часа
+    assert _split_duration_reason("спам 2 часа") == (7200, "спам")
+    assert _split_duration_reason("реклама 30 минут") == (1800, "реклама")
+    assert _split_duration_reason("мат навсегда") == (None, "мат")
+    assert _split_duration_reason("оскорбление 1 день") == (86400, "оскорбление")
     print("[OK] split_duration_reason")
 
 

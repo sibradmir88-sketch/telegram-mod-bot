@@ -335,19 +335,32 @@ _FOREVER_WORDS = ("навсегда", "навечно", "вечно", "бесс�
 def _split_duration_reason(text: str) -> tuple[int | None, str]:
     """Отделяет длительность («2 часа», «навсегда») от причины.
 
+    Время может стоять В НАЧАЛЕ («2 часа спам») или В КОНЦЕ («спам 2 часа»).
     Возвращает (секунды или None, причина). None — значит «навсегда» или без срока.
     """
     t = text.strip().lstrip("-–—").strip()
     if not t:
         return None, ""
-    first = t.split()[0].lower()
+    words = t.split()
+    first = words[0].lower()
     if first in _FOREVER_WORDS:
-        return None, " ".join(t.split()[1:]).strip(" .,;:–—")
+        return None, " ".join(words[1:]).strip(" .,;:–—")
+    # время в начале
     m = _DURATION_TOKEN_RE.search(t)
     if m and m.start() == 0:
         seconds = parse_duration(m.group(0))
         if seconds is not None:
             return seconds, t[m.end():].strip(" .,;:–—")
+    # время в конце («спам 2 часа», «мат навсегда»)
+    last = words[-1].lower()
+    if last in _FOREVER_WORDS:
+        return None, " ".join(words[:-1]).strip(" .,;:–—")
+    cleaned = t.rstrip(" .,;:–—")
+    for mm in _DURATION_TOKEN_RE.finditer(cleaned):
+        if mm.end() == len(cleaned):
+            seconds = parse_duration(mm.group(0))
+            if seconds is not None:
+                return seconds, t[:mm.start()].strip(" .,;:–—")
     return None, t
 
 
